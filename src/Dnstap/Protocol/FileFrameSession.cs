@@ -212,7 +212,7 @@ internal sealed class FrameSequenceWriter(
 
     internal async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await AcquireAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             EnsureUsable();
@@ -243,7 +243,7 @@ internal sealed class FrameSequenceWriter(
 
     internal async Task CompleteAsync(CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await AcquireAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_disposed)
@@ -273,7 +273,7 @@ internal sealed class FrameSequenceWriter(
         {
             _outgoing.ResetWrittenCount();
             FrameCodec.WriteControl(_outgoing, new ControlFrame(ControlTypes.Stop));
-            await stream.WriteAsync(_outgoing.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            await WriteStreamAsync(_outgoing.WrittenMemory, cancellationToken).ConfigureAwait(false);
             await FlushStreamAsync(cancellationToken).ConfigureAwait(false);
             _completed = true;
         }
