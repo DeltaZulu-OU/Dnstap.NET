@@ -140,6 +140,45 @@ public sealed class DuplexWriterTests
         await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.CompleteAsync());
     }
 
+
+    [TestMethod]
+    public async Task DuplexDisposeWithoutExplicitCompleteWaitsForFinish()
+    {
+        byte[] responses = Convert.FromHexString("000000000000000400000001000000000000000400000005");
+        await using var stream = new ScriptedDuplexStream(responses);
+        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        int before = stream.ReadCalls;
+        await writer.DisposeAsync();
+        Assert.IsGreaterThan(before, stream.ReadCalls, "Dispose must read FINISH after STOP.");
+    }
+
+    [TestMethod]
+    public async Task DuplexHandshakeIsBoundedWhenPeerNeverResponds()
+    {
+        await using var stream = new ScriptedDuplexStream([], stallOnRead: true);
+        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
+            operationTimeout: TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsExactlyAsync<TimeoutException>(
+            () => writer.StartAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        await writer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    [TestMethod]
+    public async Task StalledDuplexPayloadWriteCannotBlockDisposalForever()
+    {
+        await using var stream = new ScriptedDuplexStream(
+            Convert.FromHexString("000000000000000400000001"),
+            stallWriteOn: 4);
+        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
+            operationTimeout: TimeSpan.FromMilliseconds(100));
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<TimeoutException>(
+            () => writer.WriteAsync(Message()).WaitAsync(TimeSpan.FromSeconds(3)));
+        await writer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.AreEqual(4, stream.WriteCalls);
+    }
+
     private static global::Dnstap.Dnstap Message() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
@@ -150,12 +189,15 @@ public sealed class DuplexWriterTests
         }
     };
 
-    private sealed class ScriptedDuplexStream(byte[] responses) : Stream
+    private sealed class ScriptedDuplexStream(byte[] responses, bool stallOnRead = false, int stallWriteOn = 0) : Stream
     {
         private readonly MemoryStream _reads = new(responses);
         private readonly MemoryStream _writes = new();
         internal byte[] Written => _writes.ToArray();
         internal int ReadCalls { get; private set; }
+        internal int WriteCalls { get; private set; }
+        private readonly TaskCompletionSource<int> _stalledRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _stalledWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanRead => true;
         public override bool CanWrite => true;
         public override bool CanSeek => false;
@@ -165,11 +207,16 @@ public sealed class DuplexWriterTests
         public override ValueTask<int> ReadAsync(Memory<byte> destination, CancellationToken cancellationToken = default)
         {
             ReadCalls++;
+            if (stallOnRead) return new ValueTask<int>(_stalledRead.Task);
             return _reads.ReadAsync(destination[..Math.Min(destination.Length, 2)], cancellationToken);
         }
 
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default) =>
-            _writes.WriteAsync(source, cancellationToken);
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default)
+        {
+            WriteCalls++;
+            if (WriteCalls == stallWriteOn) return new ValueTask(_stalledWrite.Task);
+            return _writes.WriteAsync(source, cancellationToken);
+        }
 
         public override void Flush() { }
         public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;

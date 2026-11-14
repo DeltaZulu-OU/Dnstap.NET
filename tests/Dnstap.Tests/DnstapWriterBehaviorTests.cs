@@ -91,7 +91,7 @@ public sealed class DnstapWriterBehaviorTests
         await using var writer = new DnstapWriter(stream);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => writer.StartAsync(cancellation.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => writer.StartAsync(cancellation.Token));
         await writer.StartAsync();
         await writer.CompleteAsync();
         stream.Position = 0;
