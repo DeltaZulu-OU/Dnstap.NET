@@ -7,7 +7,7 @@ Status: planned acceptance suite, not yet implemented. Required once `DnstapList
 - Upstream: https://github.com/dmachard/DNS-collector/releases/tag/v3.3.7
 - Configuration specification: https://github.com/dmachard/DNS-collector/blob/v3.3.7/docs/loggers/logger_dnstap.md
 - File input: https://github.com/dmachard/DNS-collector/blob/v3.3.7/docs/collectors/collector_fileingestor.md
-- Target Linux x86-64 release archive: `DNS-collector_3.3.7_linux_amd64.tar.gz`, SHA-256 `7f16a995e3be6d7bb46974722a3f1336cc589fbfff2c2c3c9c57c0b4cbedcbbe` (SHA-256 published as the GitHub release asset digest; verified against the v3.3.7 release metadata on 2026-11-14). Version 3.3.7 replaces the earlier 3.3.1 pin; changing the upstream version or digest must trigger an explicit CI fixture review..
+- Target Linux x86-64 release archive: `DNS-collector_3.3.7_linux_amd64.tar.gz`, SHA-256 `7f16a995e3be6d7bb46974722a3f1336cc589fbfff2c2c3c9c57c0b4cbedcbbe` (SHA-256 published as the GitHub release asset digest; verified against the v3.3.7 release metadata on 2026-11-14). Version 3.3.7 replaces the earlier 3.3.1 pin; changing the upstream version or digest must trigger an explicit CI fixture review.
 
 ## Test topology
 
