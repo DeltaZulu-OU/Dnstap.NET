@@ -1,15 +1,21 @@
 # Dnstap.NET
 
-A small .NET 10 library for writing and decoding **dnstap** messages with Protocol Buffers and Frame Streams. It is for use by .NET DNS servers and proxies; it is **not** a DNS server, listener service, or log forwarder.
+A small .NET 10 library for writing **dnstap** DNS logs with Protocol Buffers and Frame Streams. It is **not** a DNS server, listener, queue, or log forwarder.
 
-- `src/Dnstap`: official pinned `dnstap.proto`, generated C# protobuf model, and file/duplex-stream writer.
-- `Tapper`: syslog-`logger`-style CLI, at the repository root, to emit deterministic dnstap events.
-- `tests`: unit and independent C/Go/collector interoperability tests.
+- `src/Dnstap`: pinned official `dnstap.proto`, generated C# protobuf model, and a writer for files or caller-provided duplex streams.
+- `Tapper/`: standalone CLI that emits deterministic dnstap events through the **public library API**.
+- `tests/`: MSTest and independent Go interoperability checks.
 
-The DNS host supplies packet bytes, event metadata, and the destination stream. Dnstap.NET validates/serializes the protobuf message and handles Frame Streams; the host handles connections, queues, reconnects, and delivery policy. Generated protobuf classes already support serialize/parse; no duplicate public model is planned.
+The DNS host supplies DNS packet bytes, event metadata, and the destination stream. The library serializes the protobuf message and handles Frame Streams; the host owns connections, retries, TLS, and delivery policy. Generated C# types expose standard Protobuf serialize/parse; there is no second message model.
 
-**Current status:** Internal Frame Streams file framing is implemented. Protobuf, public writer, duplex sender and Tapper are next.
+`dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release`
 
-[Scope and steps](docs/ARCHITECTURE-v1.2.md) · [Frame Streams rules](docs/FRAMESTREAMS-PROTOCOL.md) · [TDD](docs/TDD.md) · [Interop](docs/DNS-COLLECTOR-INTEROP.md)
+`dotnet run --project Tapper -- file --output test.fstrm --count 3`
 
-Run tests: `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release`. CI must be green on `main`. No PRs; the repository owner deletes merged branches.
+`dotnet run --project Tapper -- tcp --host 127.0.0.1 --port 6000 --count 3`
+
+CI verifies Tapper output with the pinned Go dnstap reader in both modes. The upstream schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c).
+
+[Scope](docs/ARCHITECTURE-v1.2.md) · [Protocol](docs/FRAMESTREAMS-PROTOCOL.md) · [TDD](docs/TDD.md) · [Interop](docs/DNS-COLLECTOR-INTEROP.md)
+
+Keep `main` green. No PRs; branch deletion is handled by the repository owner.

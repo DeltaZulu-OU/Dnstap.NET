@@ -11,7 +11,7 @@ public enum DnstapStreamMode { File, Duplex }
 public sealed class DnstapWriter : IAsyncDisposable
 {
     private readonly Stream _stream;
-    private readonly FileFrameWriter _frames;
+    private readonly FrameSequenceWriter _frames;
     private readonly DnstapStreamMode _mode;
     private readonly int _maxDataLength;
     private readonly SemaphoreSlim _completionGate = new(1, 1);
@@ -32,7 +32,7 @@ public sealed class DnstapWriter : IAsyncDisposable
 
         _stream = stream;
         _mode = mode;
-        _frames = new FileFrameWriter(stream, leaveOpen, maxDataLength);
+        _frames = new FrameSequenceWriter(stream, leaveOpen, maxDataLength);
         _maxDataLength = maxDataLength;
     }
 

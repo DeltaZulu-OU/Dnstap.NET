@@ -163,7 +163,7 @@ internal static class FileFrameSession
     }
 }
 
-internal sealed class FileFrameWriter(
+internal sealed class FrameSequenceWriter(
     Stream stream,
     bool leaveOpen = true,
     int maxDataLength = FrameCodec.DefaultMaxSendLength) : IAsyncDisposable
@@ -245,7 +245,7 @@ internal sealed class FileFrameWriter(
         try
         {
             if (_disposed)
-                throw new ObjectDisposedException(nameof(FileFrameWriter));
+                throw new ObjectDisposedException(nameof(FrameSequenceWriter));
             if (_faulted)
                 throw new InvalidOperationException("Cannot complete a faulted Frame Streams file.");
             if (!_started)
@@ -285,7 +285,7 @@ internal sealed class FileFrameWriter(
     private void EnsureUsable()
     {
         if (_disposed)
-            throw new ObjectDisposedException(nameof(FileFrameWriter));
+            throw new ObjectDisposedException(nameof(FrameSequenceWriter));
         if (_faulted)
             throw new InvalidOperationException("Writer is faulted after an earlier I/O error.");
         if (_completed)

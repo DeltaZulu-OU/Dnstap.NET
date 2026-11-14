@@ -259,7 +259,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs011_FileWriterProducesCanonicalStartDataStop()
     {
         await using var stream = new MemoryStream();
-        await using (var writer = new FileFrameWriter(stream))
+        await using (var writer = new FrameSequenceWriter(stream))
         {
             await writer.StartAsync();
             await writer.WriteAsync("abc"u8.ToArray());
@@ -274,7 +274,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_RepeatedCompletionAndDisposalWritesStopExactlyOnce()
     {
         await using var stream = new MemoryStream();
-        var writer = new FileFrameWriter(stream);
+        var writer = new FrameSequenceWriter(stream);
         await writer.StartAsync();
         await writer.WriteAsync("abc"u8.ToArray());
         await writer.CompleteAsync();
@@ -292,7 +292,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs005_CustomFileSendLimitAcceptsBoundaryAndRejectsLargerPayload()
     {
         await using var stream = new MemoryStream();
-        await using (var writer = new FileFrameWriter(stream, maxDataLength: 4))
+        await using (var writer = new FrameSequenceWriter(stream, maxDataLength: 4))
         {
             await writer.StartAsync();
             await writer.WriteAsync(new byte[] { 1, 2, 3, 4 });
@@ -313,7 +313,7 @@ public sealed class FileSessionSpecificationTests
     {
         using var stream = new MemoryStream();
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(
-            () => new FileFrameWriter(stream, maxDataLength: 0));
+            () => new FrameSequenceWriter(stream, maxDataLength: 0));
     }
 
     [TestMethod]
@@ -321,7 +321,7 @@ public sealed class FileSessionSpecificationTests
     {
         byte[] payload = "abc"u8.ToArray();
         var stream = new PayloadIdentityStream(payload);
-        await using (var writer = new FileFrameWriter(stream))
+        await using (var writer = new FrameSequenceWriter(stream))
         {
             await writer.StartAsync();
             await writer.WriteAsync(payload);
@@ -336,7 +336,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_OwnedTransportIsDisposedOnlyOnce()
     {
         var stream = new CountingStream();
-        var writer = new FileFrameWriter(stream, leaveOpen: false);
+        var writer = new FrameSequenceWriter(stream, leaveOpen: false);
         await writer.StartAsync();
         await writer.DisposeAsync();
         await writer.DisposeAsync();
@@ -349,7 +349,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_ExplicitCompletionOfUnstartedWriterMustFail()
     {
         await using var stream = new MemoryStream();
-        var writer = new FileFrameWriter(stream);
+        var writer = new FrameSequenceWriter(stream);
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
         await writer.DisposeAsync();
         Assert.AreEqual(0L, stream.Length);
@@ -359,7 +359,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_ExplicitCompletionOfFaultedWriterMustFail()
     {
         var stream = new ThrowOnSecondWriteStream();
-        var writer = new FileFrameWriter(stream);
+        var writer = new FrameSequenceWriter(stream);
         await writer.StartAsync();
         await Assert.ThrowsExactlyAsync<IOException>(() => writer.WriteAsync("abc"u8.ToArray()));
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
@@ -371,7 +371,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_DisposingUnstartedWriterCreatesNoStream()
     {
         await using var stream = new MemoryStream();
-        var writer = new FileFrameWriter(stream);
+        var writer = new FrameSequenceWriter(stream);
         await writer.DisposeAsync();
         Assert.AreEqual(0, stream.Length);
     }
@@ -380,7 +380,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_FailedStartDoesNotEmitStopOnDisposal()
     {
         var stream = new ThrowOnFirstWriteStream();
-        var writer = new FileFrameWriter(stream);
+        var writer = new FrameSequenceWriter(stream);
         await Assert.ThrowsExactlyAsync<IOException>(() => writer.StartAsync());
         await writer.DisposeAsync();
         Assert.AreEqual(1, stream.WriteAttempts, "No STOP write is allowed after a failed START.");
@@ -390,7 +390,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_FailedDataWriteDoesNotEmitStopOnDisposal()
     {
         var stream = new ThrowOnSecondWriteStream();
-        var writer = new FileFrameWriter(stream);
+        var writer = new FrameSequenceWriter(stream);
         await writer.StartAsync();
         await Assert.ThrowsExactlyAsync<IOException>(() => writer.WriteAsync("abc"u8.ToArray()));
         await writer.DisposeAsync();
@@ -401,7 +401,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs014_CompletionFlushesTheUnderlyingStream()
     {
         var stream = new FlushCountingStream();
-        await using (var writer = new FileFrameWriter(stream))
+        await using (var writer = new FrameSequenceWriter(stream))
         {
             await writer.StartAsync();
             await writer.CompleteAsync();
@@ -413,7 +413,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs011_FileWriterDoesNotWriteDataBeforeStart()
     {
         await using var stream = new MemoryStream();
-        await using var writer = new FileFrameWriter(stream);
+        await using var writer = new FrameSequenceWriter(stream);
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(
             async () => await writer.WriteAsync("abc"u8.ToArray()));
         Assert.AreEqual(0, stream.Length);
@@ -423,7 +423,7 @@ public sealed class FileSessionSpecificationTests
     public async Task Fs011_FileWriterDoesNotWriteDataAfterCompletion()
     {
         await using var stream = new MemoryStream();
-        await using var writer = new FileFrameWriter(stream);
+        await using var writer = new FrameSequenceWriter(stream);
         await writer.StartAsync();
         await writer.CompleteAsync();
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(

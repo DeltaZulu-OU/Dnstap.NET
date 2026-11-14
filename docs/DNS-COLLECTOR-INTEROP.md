@@ -1,6 +1,6 @@
 # Writer interoperability checks
 
-**Goal:** Verify that Tapper exercises Dnstap.NET and independent implementations consume its output. No .NET listener or forwarding pipeline.
+**Goal:** Verify that Tapper exercises Dnstap.NET and independent implementations consume its output. No .NET listener or forwarding pipeline. **CI currently verifies both modes against pinned golang-dnstap; DNS-collector remains a separate optional cross-implementation check.**
 
 - **File:** `Tapper file --output test.fstrm --count 3` → independent Go/libfstrm decoder. Check content type, frame sequence, exact event count, packet bytes and metadata.
 - **Socket:** Start a pinned DNS-collector **dnstap input listener** on loopback; `Tapper tcp --host 127.0.0.1 --port 6000 --count 3` → verify READY/ACCEPT/START/DATA/STOP/FINISH and decoded events. Tapper opens the socket; the library only operates on the connected stream.
