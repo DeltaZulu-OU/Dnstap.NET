@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 
 namespace Dnstap.Protocol;
@@ -146,10 +147,17 @@ internal static class FileFrameSession
     }
 }
 
-internal sealed class FileFrameWriter(Stream stream, bool leaveOpen = true) : IAsyncDisposable
+internal sealed class FileFrameWriter(
+    Stream stream,
+    bool leaveOpen = true,
+    int maxDataLength = FrameCodec.DefaultMaxSendLength) : IAsyncDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ArrayBufferWriter<byte> _outgoing = new();
+    private readonly byte[] _dataHeader = new byte[4];
+    private readonly int _maxDataLength = maxDataLength > 0
+        ? maxDataLength
+        : throw new ArgumentOutOfRangeException(nameof(maxDataLength));
     private bool _started;
     private bool _completed;
     private bool _faulted;
@@ -165,7 +173,7 @@ internal sealed class FileFrameWriter(Stream stream, bool leaveOpen = true) : IA
                 throw new InvalidOperationException("Already started.");
             try
             {
-                _outgoing.Clear();
+                _outgoing.ResetWrittenCount();
                 FrameCodec.WriteControl(_outgoing,
                     new ControlFrame(ControlTypes.Start,
                         new ReadOnlyMemory<byte>[] { ControlTypes.DnstapContentType.ToArray() }));
@@ -192,11 +200,16 @@ internal sealed class FileFrameWriter(Stream stream, bool leaveOpen = true) : IA
             EnsureUsable();
             if (!_started || _completed)
                 throw new InvalidOperationException("Writer has not started or is completed.");
-            _outgoing.Clear();
-            FrameCodec.WriteData(_outgoing, data.Span);
+            // Reject invalid payloads before writing even the four-byte header.
+            if (data.IsEmpty || data.Length > _maxDataLength)
+                throw new ArgumentOutOfRangeException(nameof(data));
+
+            BinaryPrimitives.WriteUInt32BigEndian(_dataHeader, (uint)data.Length);
             try
             {
-                await stream.WriteAsync(_outgoing.WrittenMemory, cancellationToken).ConfigureAwait(false);
+                // Writes are serialized by _gate. The caller's payload is not copied.
+                await stream.WriteAsync(_dataHeader, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -240,7 +253,7 @@ internal sealed class FileFrameWriter(Stream stream, bool leaveOpen = true) : IA
         }
         try
         {
-            _outgoing.Clear();
+            _outgoing.ResetWrittenCount();
             FrameCodec.WriteControl(_outgoing, new ControlFrame(ControlTypes.Stop));
             await stream.WriteAsync(_outgoing.WrittenMemory, cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
