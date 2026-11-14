@@ -317,7 +317,7 @@ public sealed class FileSessionSpecificationTests
     }
 
     [TestMethod]
-    public async Task Fs018_FileWriterSendsOriginalPayloadBufferWithoutCopying()
+    public async Task Fs019_FileWriterSendsOriginalPayloadBufferWithoutCopying()
     {
         byte[] payload = "abc"u8.ToArray();
         var stream = new PayloadIdentityStream(payload);
