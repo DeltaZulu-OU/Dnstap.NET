@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using Dnstap.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -285,6 +286,23 @@ public sealed class FileSessionSpecificationTests
             stream.ToArray());
     }
 
+
+    [TestMethod]
+    public async Task Fs018_FileWriterSendsOriginalPayloadBufferWithoutCopying()
+    {
+        byte[] payload = "abc"u8.ToArray();
+        var stream = new PayloadIdentityStream(payload);
+        await using (var writer = new FileFrameWriter(stream))
+        {
+            await writer.StartAsync();
+            await writer.WriteAsync(payload);
+            await writer.CompleteAsync();
+        }
+        Assert.AreEqual(1, stream.DirectPayloadWrites);
+        CollectionAssert.AreEqual(WireFixture.Concat(
+            WireFixture.Start, WireFixture.Data, WireFixture.Stop), stream.ToArray());
+    }
+
     [TestMethod]
     public async Task Fs014_OwnedTransportIsDisposedOnlyOnce()
     {
@@ -456,6 +474,23 @@ public sealed class FileSessionSpecificationTests
         {
             FlushCount++;
             return base.FlushAsync(cancellationToken);
+        }
+    }
+
+
+    private sealed class PayloadIdentityStream(byte[] expectedPayload) : MemoryStream
+    {
+        internal int DirectPayloadWrites { get; private set; }
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> segment)
+                && ReferenceEquals(segment.Array, expectedPayload)
+                && segment.Offset == 0 && segment.Count == expectedPayload.Length)
+                DirectPayloadWrites++;
+
+            return base.WriteAsync(buffer, cancellationToken);
         }
     }
 
