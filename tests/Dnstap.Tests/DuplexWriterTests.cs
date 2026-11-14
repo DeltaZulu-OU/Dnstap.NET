@@ -163,6 +163,8 @@ public sealed class DuplexWriterTests
         int before = stream.ReadCalls;
         await writer.DisposeAsync();
         Assert.IsGreaterThan(before, stream.ReadCalls, "Dispose must read FINISH after STOP.");
+        CollectionAssert.AreEqual(WireFixture.Stop,
+            stream.Written.AsSpan(stream.Written.Length - WireFixture.Stop.Length).ToArray());
     }
 
     [TestMethod]
@@ -274,6 +276,9 @@ public sealed class DuplexWriterTests
         Assert.IsTrue(await stream.AwaitStalledWriteCancellation(TimeSpan.FromSeconds(2)),
             "The cancellation token supplied to the actual stream write must be cancelled.");
         await writer.DisposeAsync();
+        CollectionAssert.AreEqual(WireFixture.Concat(
+            Convert.FromHexString("000000000000002200000004000000010000001670726F746F6275663A646E737461702E446E73746170"),
+            WireFixture.Start), stream.Written, "A failed DATA write must not be followed by STOP.");
     }
 
     private static global::Dnstap.Dnstap Message() => new()

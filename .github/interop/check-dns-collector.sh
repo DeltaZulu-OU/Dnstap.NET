@@ -51,7 +51,13 @@ if [[ "$success" -ne 1 ]]; then
   exit 1
 fi
 
-if grep -Eiq 'framestream reader error|unable to decode|worker.*busy|unexpected control framestream' "$root/collector.log"; then
+# Recheck after the logfile flush interval so late duplicates cannot satisfy an early poll.
+sleep 2
+if ! check_records "$root/tcp.jsonl" || ! check_records "$root/file.jsonl"; then
+  echo "DNS-collector record count or identity changed after the flush interval" >&2
+  exit 1
+fi
+if grep -Eiq 'framestream reader error|unable to decode|worker.*busy|buffer is full|unexpected control framestream' "$root/collector.log"; then
   echo "DNS-collector reported a protocol or queue error" >&2
   tail -100 "$root/collector.log"
   exit 1
