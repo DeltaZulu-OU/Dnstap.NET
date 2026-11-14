@@ -217,6 +217,10 @@ internal sealed class FileFrameWriter(Stream stream, bool leaveOpen = true) : IA
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(FileFrameWriter));
+            if (_faulted)
+                throw new InvalidOperationException("Cannot complete a faulted Frame Streams file.");
+            if (!_started)
+                throw new InvalidOperationException("Cannot complete a file before START.");
             await CompleteCoreAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
