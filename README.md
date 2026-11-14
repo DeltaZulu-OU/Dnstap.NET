@@ -1,20 +1,17 @@
 # Dnstap.NET
 
-A planned fully managed .NET 10 dnstap library with internal Frame Streams protocol support.
-The public API, protobuf serializer, network transports, and operational delivery loop are **not implemented yet**.
+Dnstap.NET is a planned managed .NET 10 dnstap library. Frame Streams protocol support is internal; it is **not** a separate Fstrm.NET package.
 
+The repository currently contains the architecture, normative Frame Streams specification, and CI/test infrastructure. The protocol and protobuf implementation have not yet been merged.
+
+- [Architecture Baseline v1.1](docs/ARCHITECTURE-v1.1.md)
 - [Frame Streams protocol specification](docs/FRAMESTREAMS-PROTOCOL.md)
-- [TDD and CI workflow](docs/TDD.md)
+- [TDD, branching and CI policy](docs/TDD.md)
 
-The initial MSTest suite deliberately defines failing executable contracts. The **Red** CI state is
-expected until internal framing and file-session implementations are added. Build or restore
-errors are *not* an intended Red state and must be fixed.
+### Development
 
-Architecture authority: Dnstap.NET Architecture Baseline v1.1 (14 November 2026).
+Keep `main` passing. Protocol test development proceeds in [`test/framestreams-protocol-specifications`](https://github.com/zbalkan/Dnstap.NET/tree/test/framestreams-protocol-specifications) through Red, Green and Refactor before integration. A Red branch may have failing tests by design; build and restore failures are not accepted.
 
-## Run specifications
+`dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release`
 
-`dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release`
-
-The tests use independent literal frame bytes for wire-format assertions.
-No independent C/Go interoperability fixtures are claimed yet.
+Cross-language C/Go test fixtures and independent interoperability remain to be added. A green infrastructure check is **not** evidence of implemented protocol behavior.

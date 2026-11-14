@@ -1,11 +1,11 @@
 # Internal Frame Streams protocol specification
 
 Status: **normative for the Dnstap.NET implementation**, revision 1 (14 November 2026).
-Parent architecture: Dnstap.NET Architecture Baseline v1.1.
+Parent architecture: [Dnstap.NET Architecture Baseline v1.1](ARCHITECTURE-v1.1.md).
 
 ## Scope and authority
 
-Dnstap.NET is one managed .NET 10 library. Frame Streams framing and control negotiation are **internal** implementation details; this document does not create a new Fstrm.NET library or a public generic Frame Streams API. The wire format is specified by libfstrm's published \`control.h\`, with its \`control.c\`, \`reader.c\`, and \`writer.c\` as implementation references:
+Dnstap.NET is one managed .NET 10 library. Frame Streams framing and control negotiation are **internal** implementation details; this document does not create a new Fstrm.NET library or a public generic Frame Streams API. The wire format is specified by libfstrm's published `control.h`, with its `control.c`, `reader.c`, and `writer.c` as implementation references:
 
 - [Frame Streams wire format and state rules (fstrm 0.6.1)](https://github.com/farsightsec/fstrm/blob/v0.6.1/fstrm/control.h)
 - [C control encoding and validation](https://github.com/farsightsec/fstrm/blob/v0.6.1/fstrm/control.c)
@@ -20,24 +20,24 @@ All integer lengths and control identifiers are unsigned 32-bit values in networ
 
 | Wire item | Encoding | Interpretation |
 |---|---|---|
-| Data frame | \`uint32 length\` + exactly \`length\` payload bytes | \`length > 0\` |
-| Control frame | \`uint32(0)\` + \`uint32 controlLength\` + exactly \`controlLength\` payload bytes | Zero is the control escape |
-| Control payload | \`uint32 controlType\` followed by zero or more fields | Minimum payload is 4 bytes |
-| Control field | \`uint32 fieldType\` + \`uint32 fieldLength\` + field bytes | All declared lengths checked before slicing |
+| Data frame | `uint32 length` + exactly `length` payload bytes | `length > 0` |
+| Control frame | `uint32(0)` + `uint32 controlLength` + exactly `controlLength` payload bytes | Zero is the control escape |
+| Control payload | `uint32 controlType` followed by zero or more fields | Minimum payload is 4 bytes |
+| Control field | `uint32 fieldType` + `uint32 fieldLength` + field bytes | All declared lengths checked before slicing |
 
 Zero-length *data* is not representable because zero is reserved for the control-frame escape. A data payload is opaque bytes. No dnstap protobuf parsing occurs in the Frame Streams layer.
 
 Sample hex bytes (whitespace for readability):
 
-\`\`\`text
+```text
 DATA("abc") = 00 00 00 03 61 62 63
 STOP        = 00 00 00 00 00 00 00 04 00 00 00 03
 START       = 00 00 00 00 00 00 00 22 00 00 00 02
               00 00 00 01 00 00 00 16
               70 72 6f 74 6f 62 75 66 3a 64 6e 73 74 61 70 2e 44 6e 73 74 61 70
-\`\`\`
+```
 
-START above contains the 22-byte binary content type \`protobuf:dnstap.Dnstap\`. The control payload length is 34 bytes (4 + 8 + 22); the 8-byte framing header is **not** included in that length.
+START above contains the 22-byte binary content type `protobuf:dnstap.Dnstap`. The control payload length is 34 bytes (4 + 8 + 22); the 8-byte framing header is **not** included in that length.
 
 ## 2. Control types and fields
 
@@ -51,7 +51,7 @@ START above contains the 22-byte binary content type \`protobuf:dnstap.Dnstap\`.
 
 The only currently defined field is CONTENT_TYPE (numeric field type 1). Its value is an opaque byte string, possibly containing zero bytes, without NUL termination. Compare content types by **length and bytes**, not by normalized or case-insensitive text.
 
-The encoder always advertises \`protobuf:dnstap.Dnstap\`. A received START with no CONTENT_TYPE is protocol-valid and is accepted in file mode under baseline v1.1. When the field is present, it must exactly equal the dnstap content type. START with multiple CONTENT_TYPE fields, and STOP or FINISH with any CONTENT_TYPE field, are invalid. Unrecognized field *types* are rejected.
+The encoder always advertises `protobuf:dnstap.Dnstap`. A received START with no CONTENT_TYPE is protocol-valid and is accepted in file mode under baseline v1.1. When the field is present, it must exactly equal the dnstap content type. START with multiple CONTENT_TYPE fields, and STOP or FINISH with any CONTENT_TYPE field, are invalid. Unrecognized field *types* are rejected.
 
 A decoder accepts unknown numeric control *types* as a structural control message. A session rejects them before START and ignores them after START, as required for forward compatibility. This distinction avoids treating a decoding failure as permission to skip malformed fields.
 
@@ -59,15 +59,15 @@ A decoder accepts unknown numeric control *types* as a structural control messag
 
 ### Unidirectional file stream
 
-\`\`\`text
+```text
 CREATED -- START --> ACTIVE -- zero or more DATA --> ACTIVE -- STOP --> ENDED
-\`\`\`
+```
 
 Only START may open the stream, and only STOP may close it. READY, ACCEPT, FINISH, duplicate START, data before START, and any bytes after STOP are errors. EOF before STOP is an error; EOF at the end after STOP is expected. A control type not defined today is ignored only during ACTIVE. Closing a writer writes STOP once; it must not write a duplicate STOP on repeated disposal.
 
 ### Bidirectional socket stream
 
-\`\`\`text
+```text
 Writer                          Reader
   | --- READY (offered) --------> |
   | <------ ACCEPT (chosen) ----- |
@@ -75,7 +75,7 @@ Writer                          Reader
   | --- DATA (zero or more) ----> |
   | --- STOP -------------------> |
   | <------ FINISH -------------- |
-\`\`\`
+```
 
 FINISH is a **shutdown response**, never part of startup. START must be sent exactly once. A socket session must retain the same input stream and framing state between negotiation and normal data reads, so it cannot lose bytes already received with START. The sender/receiver Frame Streams roles are independent of which party initiated the underlying TCP connection. Reversed socket initiation is deferred per baseline v1.1.
 
@@ -99,14 +99,14 @@ FINISH is a **shutdown response**, never part of startup. START must be sent exa
 | FS-014 | One session owns transport and protocol state | Cleanup on errors, no duplicate START/STOP |
 | FS-015 | Timeouts bound handshake, each write, and FINISH wait | Applied when socket sessions are introduced |
 
-Control max 512 bytes excludes the 8-byte outer header. The default 96 KiB send maximum is a Dnstap.NET compatibility policy, **not** a Frame Streams protocol requirement.
+Control max 512 bytes excludes the 8-byte outer header. The default 96 KiB send maximum is a Dnstap.NET compatibility policy, **not** a Frame Streams protocol requirement. It is inspired by [golang-dnstap's 96 KiB input `MaxPayloadSize`](https://github.com/dnstap/golang-dnstap/blob/ebb538e7d351a58861a8f348491828214a1d8db2/FrameStreamInput.go). The 1 MiB default receive limit follows [golang-framestream `DEFAULT_MAX_PAYLOAD_SIZE = 1048576`](https://github.com/farsightsec/golang-framestream/blob/b6862efda285882ccc371ca05e26db353877d26d/framestream.go). These are implementation defaults, not universal wire limits.
 
 Treat clean EOF at a frame boundary as a **codec** result. Whether EOF is legal is a **session-state** decision; for example, EOF before STOP in file mode is illegal.
 
 ## 5. Test oracle and sequencing
 
-The tests in \`tests/Dnstap.Tests/Protocol\` are executable acceptance criteria. Initial tests use manually specified wire bytes rather than comparing two implementations of our own encoder and decoder; assertions are deliberately independent of production encoding logic.
+The feature-branch tests in `tests/Dnstap.Tests/Protocol` are executable acceptance criteria; `main` must remain green. Tests are brought into `main` only alongside passing implementations. Initial tests use manually specified wire bytes rather than comparing two implementations of our own encoder and decoder; assertions are deliberately independent of production encoding logic. The frame parser reports **Done**, **NeedMoreData**, or **InvalidData** independently; a truncated prefix is not intrinsically malformed until EOF is established. Parser APIs must not force a per-frame allocation.
 
-The first **Red** slice covers FS-001..FS-011, FS-013 (file reads) and FS-014 (file lifetime). The first **Green** slice will implement only the internal codec and file-session behavior. FS-012, socket-level FS-013 and FS-015 acquire tests when the TCP slice begins. File fixtures generated by \`fstrm_dump\`, \`golang-dnstap\`, and other independent implementations remain an explicit subsequent interoperability gate: internally constructed fixtures are **not** cross-language evidence.
+The first **Red** slice targets FS-001..FS-011 and FS-013/FS-014 (file reads, writer lifetime), with explicit positive boundary cases and negative cases. Missing tests must not be described as covered. The first **Green** slice will implement only the internal codec and file-session behavior. FS-012, socket-level FS-013 and FS-015 acquire tests when the TCP slice begins. File fixtures generated by `fstrm_dump`, `golang-dnstap`, and other independent implementations remain an explicit subsequent interoperability gate: internally constructed fixtures are **not** cross-language evidence.
 
 No tests in this phase claim protobuf validity, network interoperability, NativeAOT compatibility, or bounded queue behavior. Those properties belong to later phases of v1.1.

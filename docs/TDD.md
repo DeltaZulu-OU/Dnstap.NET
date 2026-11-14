@@ -1,15 +1,31 @@
 # Specification-first TDD workflow
 
-The protocol specification is in [FRAMESTREAMS-PROTOCOL.md](FRAMESTREAMS-PROTOCOL.md). Follow **Red → Green → Refactor** in that order. The reference protocol, not an earlier Fstrm.NET class design, is the source of truth.
+Authoritative sources: [Architecture Baseline v1.1](ARCHITECTURE-v1.1.md), [Frame Streams protocol specification](FRAMESTREAMS-PROTOCOL.md).
 
-1. **Red:** Add a failing MSTest acceptance case grounded in a specific FS-xxx requirement. Compilation must succeed; runtime tests fail because the implementation is absent or wrong. Record the first failing test and preserve the expected wire bytes.
-2. **Green:** Implement the smallest internal Dnstap.NET change that satisfies the selected test without weakening its assertion. Repeat until the selected slice passes.
-3. **Refactor:** Simplify while maintaining all prior test results. Re-run the full test suite after refactoring.
-4. **Interoperability:** Validate file and socket output against independent C/Go implementations. Self-roundtrip is insufficient as the only oracle.
-5. **NativeAOT:** Once protobuf model is added, publish a smoke-test executable; don't claim AOT validation from unit tests alone.
+## Branch policy
 
-The GitHub Actions workflow runs restore, Release build, and MSTest on every push, pull request, and manual dispatch. TRX results are uploaded on both success and failure. Initially, a red run is **expected** and is *not* to be hidden with \`continue-on-error\` or test skips. Do not enable branch protection requiring a green check until a genuine Green iteration. A red CI job is a normal engineering state, not a security incident.
+**Keep `main` green.** Work on feature branches. Commit deliberately failing specifications to the feature branch only and run CI there. Never merge or fast-forward a Red branch into `main`. The earlier red tests accidentally committed to `main` are removed by a corrective forward commit; their history remains available. No force-push or history rewrite is necessary.
 
-Work only on feature branches. Do not merge a deliberately red branch. Commit messages use past-tense verbs without conventional-commit prefixes.
+## Red → Green → Refactor
 
-Current scope: protocol docs, internal compile-time contracts, executable red specifications, and CI. No runtime protocol implementation or public Dnstap API is being claimed.
+1. **Red**: add a focused behavioral MSTest case for a particular FS-xxx requirement on the feature branch. A meaningful Red test distinguishes an *incorrect result* from an unimplemented API. Prefer `OperationStatus.Done/NeedMoreData/InvalidData` for incremental parsing; include valid examples and exact limits so a decoder that rejects everything cannot pass. Ensure builds succeed in CI; tests fail for the intended behavior, not `NotImplementedException`.
+2. **Green**: implement the minimum production behavior to make the case pass, without weakening or skipping assertions. Add positive and negative boundary checks before claiming a limit is verified.
+3. **Refactor**: simplify implementation and internal API, then rerun the entire suite. Tests should specify wire bytes and external results rather than incidental internal buffer shapes or record equality.
+4. **Interop gate**: validate against C/Go input/output; a self-roundtrip is never sufficient evidence.
+5. **AOT gate**: once protobuf is introduced, publish/run a native executable under CI and verify warnings.
+
+The workflow restores, builds and runs MSTest in Release on each push and pull request. TRX artifacts upload even on failure. CI runs from branch pushes without a PR. Duplicate PR/push jobs can be canceled using a single concurrency key. Red is an expected state only on the feature branch: do not use `continue-on-error`, disable tests, or claim main is healthy while failing.
+
+## Test design requirements
+
+- Test both **acceptance and rejection** for every bounded length: 4/512-byte controls; 0/256-byte content types; 1 and exactly 1 MiB receive data; 1 and exactly 96 KiB send data. Use length-only prefixes for *early rejection* tests and full payloads for acceptance tests.
+- Distinguish `NeedMoreData` from `InvalidData`; only the consuming session declares premature EOF malformed. Parsing from segmented `ReadOnlySequence<byte>` cannot require a whole input array.
+- Exercise illegal file sequences (empty, STOP before START, READY/ACCEPT/FINISH, repeated START/STOP, trailing data), unknown future controls, NUL-containing content types, and cancellation.
+- Verify writer disposal sends STOP exactly once, even under repeated calls; verify ownership and cleanup using an instrumented stream.
+- Use `Assert.ThrowsExactly` and `Assert.ThrowsExactlyAsync` when exception assertions are appropriate. Do not write generic wrappers that hide unexpected exceptions.
+- Favor behavior-focused tests over APIs fixed too early. Use internal `IBufferWriter<byte>` for output; do not mandate one allocated `byte[]` per frame.
+- Tests that require an implemented protocol should only appear on the feature branch during Red. The default branch contains only passing infrastructure tests until real behavior is merged.
+
+The SDK and Actions dependencies are pinned. Restore/build warnings are errors across production and tests. Failed restore/build steps must be fixed rather than counted as successful Red results.
+
+Commit messages start with a past-tense verb and no prefix. Keep independent changes in separate commits.
