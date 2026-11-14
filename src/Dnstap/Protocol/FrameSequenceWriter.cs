@@ -139,20 +139,41 @@ internal sealed class FrameSequenceWriter(
 
     private async Task WriteStreamAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
     {
-        ValueTask write = stream.WriteAsync(payload, cancellationToken);
-        if (operationTimeout is TimeSpan timeout)
-            await write.AsTask().WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
-        else
-            await write.ConfigureAwait(false);
+        if (operationTimeout is not TimeSpan timeout)
+        {
+            await stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        try
+        {
+            await stream.WriteAsync(payload, deadline.Token).AsTask()
+                .WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Frame Streams write timed out.");
+        }
     }
 
     private async Task FlushStreamAsync(CancellationToken cancellationToken)
     {
-        Task flush = stream.FlushAsync(cancellationToken);
-        if (operationTimeout is TimeSpan timeout)
-            await flush.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
-        else
-            await flush.ConfigureAwait(false);
+        if (operationTimeout is not TimeSpan timeout)
+        {
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        try
+        {
+            await stream.FlushAsync(deadline.Token).WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Frame Streams flush timed out.");
+        }
     }
 
     private void EnsureUsable()

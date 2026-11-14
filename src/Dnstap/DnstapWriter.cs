@@ -88,6 +88,7 @@ public sealed class DnstapWriter : IAsyncDisposable
             throw new InvalidOperationException("Writer is faulted.");
         ArgumentNullException.ThrowIfNull(message);
         if (!message.IsInitialized() || !Enum.IsDefined(message.Type) ||
+            (message.Type == Dnstap.Types.Type.Message && message.Message is null) ||
             (message.Message is { } nested && !Enum.IsDefined(nested.Type)))
             throw new ArgumentException("dnstap required fields must contain valid enum values.", nameof(message));
         int size = message.CalculateSize();
@@ -138,17 +139,42 @@ public sealed class DnstapWriter : IAsyncDisposable
         }
     }
 
-    private Task WriteControlAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken) =>
-        _stream.WriteAsync(payload, cancellationToken).AsTask()
-            .WaitAsync(_operationTimeout, cancellationToken);
+    private async Task WriteControlAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_operationTimeout);
+        try
+        {
+            await _stream.WriteAsync(payload, timeout.Token).AsTask()
+                .WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Frame Streams control write timed out.");
+        }
+    }
+
+    private async Task ReadControlBytesAsync(Memory<byte> destination, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_operationTimeout);
+        try
+        {
+            await _stream.ReadExactlyAsync(destination, timeout.Token).AsTask()
+                .WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Frame Streams control read timed out.");
+        }
+    }
 
     private async Task<ControlFrame> ReadControlAsync(CancellationToken cancellationToken)
     {
         byte[] header = new byte[8];
         try
         {
-            await _stream.ReadExactlyAsync(header, cancellationToken).AsTask()
-                .WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
+            await ReadControlBytesAsync(header, cancellationToken).ConfigureAwait(false);
             if (BinaryPrimitives.ReadUInt32BigEndian(header) != 0)
                 throw new InvalidDataException("Expected a Frame Streams control frame.");
 
@@ -157,8 +183,7 @@ public sealed class DnstapWriter : IAsyncDisposable
                 throw new InvalidDataException("Invalid Frame Streams control length.");
 
             byte[] payload = new byte[(int)length];
-            await _stream.ReadExactlyAsync(payload, cancellationToken).AsTask()
-                .WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
+            await ReadControlBytesAsync(payload, cancellationToken).ConfigureAwait(false);
             if (ControlCodec.TryDecode(new ReadOnlySequence<byte>(payload), out ControlFrame? control) != OperationStatus.Done)
                 throw new InvalidDataException("Invalid Frame Streams control payload.");
             return control!;
