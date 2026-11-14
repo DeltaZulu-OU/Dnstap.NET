@@ -1,0 +1,85 @@
+using System.Buffers.Binary;
+using System.Net.Sockets;
+using Dnstap;
+using Google.Protobuf;
+
+try
+{
+    if (args.Length == 0 || (args[0] != "file" && args[0] != "tcp"))
+    {
+        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N | Tapper tcp --host HOST --port PORT --count N");
+        return 2;
+    }
+
+    string mode = args[0];
+    int expectedArgs = mode == "file" ? 5 : 7;
+    if (args.Length != expectedArgs ||
+        !int.TryParse(GetOption(args, "--count"), out int count) || count < 0)
+        throw new ArgumentException("Invalid arguments or count.");
+
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    if (mode == "file")
+    {
+        await using var output = new FileStream(GetOption(args, "--output"), FileMode.Create, FileAccess.Write);
+        await EmitAsync(output, DnstapStreamMode.File, count, deadline.Token);
+    }
+    else
+    {
+        string host = GetOption(args, "--host");
+        if (!int.TryParse(GetOption(args, "--port"), out int port) || port is < 1 or > 65535)
+            throw new ArgumentException("Invalid port.");
+
+        using var client = new TcpClient();
+        await client.ConnectAsync(host, port, deadline.Token);
+        await EmitAsync(client.GetStream(), DnstapStreamMode.Duplex, count, deadline.Token);
+    }
+
+    Console.WriteLine($"Wrote {count} dnstap records.");
+    return 0;
+}
+catch (Exception error)
+{
+    Console.Error.WriteLine(error.Message);
+    return 1;
+}
+
+static string GetOption(string[] arguments, string option)
+{
+    for (int i = 1; i < arguments.Length - 1; i++)
+        if (arguments[i] == option)
+            return arguments[i + 1];
+    throw new ArgumentException($"Missing {option}.");
+}
+
+static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, CancellationToken cancellationToken)
+{
+    await using var writer = new DnstapWriter(output, mode);
+    await writer.StartAsync(cancellationToken);
+    for (int i = 0; i < count; i++)
+        await writer.WriteAsync(CreateEvent(i), cancellationToken);
+    await writer.CompleteAsync(cancellationToken);
+}
+
+static global::Dnstap.Dnstap CreateEvent(int index)
+{
+    byte[] query = Convert.FromHexString("000101000001000000000000076578616D706C6503636F6D0000010001");
+    BinaryPrimitives.WriteUInt16BigEndian(query, (ushort)index);
+    return new global::Dnstap.Dnstap
+    {
+        Type = global::Dnstap.Dnstap.Types.Type.Message,
+        Identity = ByteString.CopyFromUtf8("tapper"),
+        Message = new global::Dnstap.Message
+        {
+            Type = global::Dnstap.Message.Types.Type.ClientQuery,
+            SocketFamily = SocketFamily.Inet,
+            SocketProtocol = SocketProtocol.Udp,
+            QueryAddress = ByteString.CopyFrom(new byte[] { 192, 0, 2, 10 }),
+            ResponseAddress = ByteString.CopyFrom(new byte[] { 192, 0, 2, 53 }),
+            QueryPort = (uint)(53000 + index % 10000),
+            ResponsePort = 53,
+            QueryTimeSec = 1_700_000_000,
+            QueryTimeNsec = (uint)(index % 1_000_000_000),
+            QueryMessage = ByteString.CopyFrom(query)
+        }
+    };
+}
