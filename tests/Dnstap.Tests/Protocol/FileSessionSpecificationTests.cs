@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Dnstap.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -77,6 +78,19 @@ public sealed class FileSessionSpecificationTests
         });
     }
 
+
+    [TestMethod]
+    public async Task Fs004_FileReaderAcceptsDataExactlyAtCustomReceiveLimit()
+    {
+        await using var stream = new MemoryStream(WireFixture.Concat(
+            WireFixture.Start, WireFixture.Data, WireFixture.Stop));
+        var payloads = new List<byte[]>();
+        await foreach (var payload in FileFrameSession.ReadAsync(stream, maxDataLength: 3))
+            payloads.Add(payload.ToArray());
+        Assert.HasCount(1, payloads);
+        CollectionAssert.AreEqual("abc"u8.ToArray(), payloads[0]);
+    }
+
     [TestMethod]
     public async Task Fs011_DuplicateStartIsInvalid()
     {
@@ -90,6 +104,16 @@ public sealed class FileSessionSpecificationTests
     {
         await using var stream = new MemoryStream(WireFixture.Concat(
             WireFixture.Start, WireFixture.Stop, WireFixture.Data));
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => ReadAllAsync(stream));
+    }
+
+
+    [TestMethod]
+    public async Task Fs011_RejectsTrailingByteDeliveredAfterStopInSeparateRead()
+    {
+        byte[] frames = WireFixture.Concat(WireFixture.Start, WireFixture.Stop, new byte[] { 0x58 });
+        await using var stream = new BoundaryAwareReadStream(frames,
+            WireFixture.Start.Length + WireFixture.Stop.Length);
         await Assert.ThrowsExactlyAsync<InvalidDataException>(() => ReadAllAsync(stream));
     }
 
@@ -196,6 +220,40 @@ public sealed class FileSessionSpecificationTests
         Assert.AreEqual(0, messages.Count);
     }
 
+
+    [TestMethod]
+    public async Task Fs018_LargeThenManySmallFramesDoNotRetainOversizedReadBuffer()
+    {
+        const int largeLength = FrameCodec.DefaultMaxReceiveLength;
+        const int smallCount = 10_000;
+        byte[] largeFrame = new byte[4 + largeLength];
+        BinaryPrimitives.WriteUInt32BigEndian(largeFrame, largeLength);
+        largeFrame[4] = 0x5A;
+        byte[] tinyFrame = { 0, 0, 0, 1, 0x58 };
+        byte[] wire = WireFixture.Concat(WireFixture.Start,
+            largeFrame, Enumerable.Repeat(tinyFrame, smallCount).SelectMany(x => x).ToArray(),
+            WireFixture.Stop);
+
+        await using var stream = new BoundaryAwareReadStream(wire,
+            WireFixture.Start.Length + largeFrame.Length, maxRequestAfterBoundary: 65_536);
+        int count = 0;
+        await foreach (var item in FileFrameSession.ReadAsync(stream))
+        {
+            count++;
+            if (count == 1)
+            {
+                Assert.AreEqual(largeLength, item.Length);
+                Assert.AreEqual((byte)0x5A, item.Span[0]);
+            }
+            else
+            {
+                Assert.AreEqual(1, item.Length);
+                Assert.AreEqual((byte)0x58, item.Span[0]);
+            }
+        }
+        Assert.AreEqual(smallCount + 1, count);
+    }
+
     [TestMethod]
     public async Task Fs011_FileWriterProducesCanonicalStartDataStop()
     {
@@ -238,6 +296,29 @@ public sealed class FileSessionSpecificationTests
         Assert.AreEqual(1, stream.DisposeCount);
     }
 
+
+
+    [TestMethod]
+    public async Task Fs014_ExplicitCompletionOfUnstartedWriterMustFail()
+    {
+        await using var stream = new MemoryStream();
+        var writer = new FileFrameWriter(stream);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        await writer.DisposeAsync();
+        Assert.AreEqual(0L, stream.Length);
+    }
+
+    [TestMethod]
+    public async Task Fs014_ExplicitCompletionOfFaultedWriterMustFail()
+    {
+        var stream = new ThrowOnSecondWriteStream();
+        var writer = new FileFrameWriter(stream);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<IOException>(() => writer.WriteAsync("abc"u8.ToArray()));
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        await writer.DisposeAsync();
+        Assert.AreEqual(2, stream.WriteAttempts);
+    }
 
     [TestMethod]
     public async Task Fs014_DisposingUnstartedWriterCreatesNoStream()
@@ -319,6 +400,24 @@ public sealed class FileSessionSpecificationTests
         await foreach (ReadOnlyMemory<byte> item in FileFrameSession.ReadAsync(stream, cancellationToken))
             result.Add(item.ToArray());
         return result;
+    }
+
+
+    // Enforces a read boundary after a large frame. An oversized subsequent read
+    // request means the reader retained its previous megabyte-scale buffer.
+    private sealed class BoundaryAwareReadStream(
+        byte[] wire, int boundary, int maxRequestAfterBoundary = int.MaxValue) : MemoryStream(wire)
+    {
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position >= boundary && buffer.Length > maxRequestAfterBoundary)
+                throw new InvalidOperationException("Large frame buffer was retained for small frames.");
+            int count = Position < boundary
+                ? Math.Min(buffer.Length, boundary - checked((int)Position))
+                : buffer.Length;
+            return base.ReadAsync(buffer[..count], cancellationToken);
+        }
     }
 
     private sealed class OneByteStream(byte[] wire) : MemoryStream(wire)
