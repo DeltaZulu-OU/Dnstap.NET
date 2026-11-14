@@ -1,6 +1,6 @@
 # Specification-first TDD workflow
 
-Authoritative sources: [Architecture Baseline v1.1](ARCHITECTURE-v1.1.md), [Frame Streams protocol specification](FRAMESTREAMS-PROTOCOL.md).
+Authoritative sources: [Architecture Baseline v1.2](ARCHITECTURE-v1.2.md), [Frame Streams protocol specification](FRAMESTREAMS-PROTOCOL.md).
 
 ## Branch policy
 
@@ -12,7 +12,7 @@ Authoritative sources: [Architecture Baseline v1.1](ARCHITECTURE-v1.1.md), [Fram
 2. **Green**: implement the minimum production behavior to make the case pass, without weakening or skipping assertions. Add positive and negative boundary checks before claiming a limit is verified.
 3. **Refactor**: simplify implementation and internal API, then rerun the entire suite. Tests should specify wire bytes and external results rather than incidental internal buffer shapes or record equality.
 4. **Interop gate**: validate against C/Go input/output; a self-roundtrip is never sufficient evidence.
-5. **AOT gate**: once protobuf is introduced, publish/run a native executable under CI and verify warnings.
+5. **Writer acceptance gate**: after adding the generated dnstap protobuf model, verify that an independent dnstap reader/collector accepts the output with byte-exact DNS packet fields and expected metadata. NativeAOT publishing is not a requirement.
 
 The workflow restores, builds and runs MSTest in Release on every branch push and on manual dispatch. Pull requests are not used for this repository. TRX artifacts upload even on failure. Repeated pushes to the same branch can cancel superseded runs using a branch-scoped concurrency key. Red is an expected state only on the feature branch: do not use `continue-on-error`, disable tests, or claim main is healthy while failing.
 
@@ -31,3 +31,5 @@ Validated experimental work is integrated into `main` via a no-fast-forward merg
 **Regression bisection:** Feature branches deliberately include Red commits, so a normal `git bisect` over the merged history may check out a commit with expected failing tests. When bisecting the default branch's integrated states, use `git bisect start --first-parent` to follow the merge/mainline history. This does not replace a focused investigation of a feature branch when needed. The SDK and Actions dependencies are pinned. Restore/build warnings are errors across production and tests. Failed restore/build steps must be fixed rather than counted as successful Red results.
 
 Commit messages start with a past-tense verb and no prefix. Keep independent changes in separate commits.
+
+The library's target is a **sender-only logging format**, not a receiver, log-forwarding pipeline, or service. Do not introduce public listener APIs, additional domain message models, metrics, reconnection, delivery queues or NativeAOT smoke tests in the name of completing the writer. The repository owner deletes finished branches.

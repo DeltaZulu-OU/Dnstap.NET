@@ -1,49 +1,54 @@
-# DNS-collector interoperability test plan
+# Dnstap writer interoperability test plan
 
-Status: planned acceptance suite, not yet implemented. Required once `DnstapListener` and protobuf decoding are available.
+Status: planned; not yet running. Governing scope: [Architecture Baseline v1.2](ARCHITECTURE-v1.2.md).
 
-## Reference
+## Goal
 
-- Upstream: https://github.com/dmachard/DNS-collector/releases/tag/v3.3.7
-- Configuration specification: https://github.com/dmachard/DNS-collector/blob/v3.3.7/docs/loggers/logger_dnstap.md
-- File input: https://github.com/dmachard/DNS-collector/blob/v3.3.7/docs/collectors/collector_fileingestor.md
-- Target Linux x86-64 release archive: `DNS-collector_3.3.7_linux_amd64.tar.gz`, SHA-256 `7f16a995e3be6d7bb46974722a3f1336cc589fbfff2c2c3c9c57c0b4cbedcbbe` (SHA-256 published as the GitHub release asset digest; verified against the v3.3.7 release metadata on 2026-11-14). Version 3.3.7 replaces the earlier 3.3.1 pin; changing the upstream version or digest must trigger an explicit CI fixture review.
+Prove that **a .NET DNS server or proxy can write genuine dnstap logs** and that independently developed tools can decode them. Dnstap.NET is the **sender** in every required socket test. There is no plan to add a public .NET listener.
 
-## Test topology
+## Pinned independent implementations
+
+- DNS-collector release: https://github.com/dmachard/DNS-collector/releases/tag/v3.3.7
+- DNS-collector's [dnstap input collector](https://github.com/dmachard/DNS-collector/blob/v3.3.7/docs/collectors/collector_dnstap.md) listens on TCP or Unix sockets and can be configured without TLS for the test.
+- DNS-collector's [file ingestor](https://github.com/dmachard/DNS-collector/blob/v3.3.7/docs/collectors/collector_fileingestor.md) can consume saved dnstap captures.
+- Linux x86-64 release archive: `DNS-collector_3.3.7_linux_amd64.tar.gz`. SHA-256: `7f16a995e3be6d7bb46974722a3f1336cc589fbfff2c2c3c9c57c0b4cbedcbbe`. Pin the exact release and validate its checksum before extraction.
+- Also use pinned `golang-dnstap`/`libfstrm` tools as independent file-mode decoding oracles where practicable.
+
+## File-mode test
 
 ```text
-Independent, pinned .fstrm capture (with known expected dnstap messages)
-       |
-       v
-DNS-collector file-ingestor (watch-mode: dnstap)
-       |
-       v
-DNS-collector dnstapclient logger (transport: tcp, compression: none)
-       |
-       v
-Dnstap.NET listener bound to 127.0.0.1:ephemeral-port
-       |
-       v
-Frame Streams READY / ACCEPT / START -> Google.Protobuf decode
-       |
-       v
-MSTest assertions on received typed messages and connection lifecycle
+Known DNS query/response wire bytes + schema-defined metadata
+                |
+                v
+  Dnstap.NET protobuf serializer + file-mode Frame Streams writer
+                |
+                v
+  Independent tool reading .fstrm, checking decoded dnstap fields
 ```
 
-DNS-collector's ordinary `dnstap` input is a **listener**, not a sender. Use `dnstapclient` as the sender. For deterministic inputs, use independently captured dnstap files from the fixture corpus; do not validate our reader by replaying files generated only by our own writer.
+Assert exact message type, DNS wire packets, timestamps, addresses, ports, socket protocol and optional identity, where set. Check correctly serialized `dnstap.Dnstap` (not UTF-8 pseudo-logs), START/DATA/STOP, and clean file termination. Test malformed proto2 required fields and oversized payloads without output corruption.
 
-## Proposed CI harness
+## Duplex-stream test
 
-An integration test class/assembly fixture should start **one Dnstap.NET listener** on an ephemeral loopback port, then start one DNS-collector process for the test group using a generated YAML config with `file-ingestor` -> `dnstapclient`. Route each received message into a test-owned bounded channel. Only start the replay after the receiver is ready. Copy the fixture into the watched directory under a temporary extension and atomically rename it to `.fstrm` to trigger ingestion.
+```text
+DNS-collector dnstap input listener (TCP loopback, compression: none)
+              ^
+              | ACCEPT, FINISH / READY, START, DATA, STOP
+              |
+.NET test host's connected NetworkStream
+              ^
+              |
+        Dnstap.NET sender
+```
 
-Download the pinned DNS-collector release in its **own integration-test job**, verify the archive SHA-256 **before extraction**, and fail on mismatch. Keep package-download failures separate from protocol test failures. Avoid unverified `latest` release URLs or dynamically inferred asset names.
+Start one pinned DNS-collector process per test fixture, configure its **dnstap input collector**, and expose the listener on loopback. The .NET test host creates the socket/stream; Dnstap.NET performs only the Frame Streams sender handshake and writes protobuf messages. Use a bounded readiness deadline and run the sender after the collector is listening.
 
-The suite asserts exactly expected event counts, protobuf envelope validity, message type, identity/version if set, timestamps, addresses, DNS wire payload and byte-exact content-type negotiation. Use a bounded timeout, a deterministic end marker or known message count, and negative checks for additional messages. Capture DNS-collector stdout/stderr and Dnstap.NET diagnostics as CI artifacts.
+Verify that the independently implemented collector decodes the expected messages, including a known event count with no duplicates. Record collector stdout/stderr and output artifacts on failure; ensure teardown kills the process and frees the port. The fixture may reuse one connection across sequential tests only if events can be correlated and concurrent tests are disabled. Require a separate negative test for an incompatible content-type response.
 
-Dispose the fixture in a `finally`/teardown path: terminate the collector process, close the listener, await all tasks, and delete temporary directories. Disable parallel execution for tests sharing the socket/process; independent tests should not share the same network reader. Ensure the test detects dropped or duplicated messages.
+CI runs a dedicated integration job with the pinned binary and SHA-256 verification. Download failures are not protocol failures. Avoid floating releases, external test services or assumptions of successful transmission based on local stream writes alone.
 
-## Exit criteria and scope
+## Exit criteria
 
-This future suite validates **DNS-collector -> Dnstap.NET receiver** transport, handshake, and parsing. Independently run **Dnstap.NET sender -> DNS-collector listener** to validate the opposite direction. Neither direction should be conflated with generic malformed-frame unit tests. Stay on default uncompressed Frame Streams until the basic test passes; advanced compression is a separate compatibility feature.
+File-mode output must be readable by an independent implementation. Duplex output must negotiate and deliver correct protobuf records to DNS-collector (or an equivalent independent collector), and shutdown must follow STOP → FINISH. Never claim external interoperability from an internal writer/reader round-trip.
 
-Do not add this to the current file-mode Red/Green gate. Add it in the TCP/protobuf milestone, and require it to pass before claiming DNS-collector interoperability.
+**Out of scope:** DNS-collector acting as the sender to a .NET listener, receiving/forwarding pipelines, collector process management in production, TLS implementation inside Dnstap.NET, logging queues, reconnect and metrics.
