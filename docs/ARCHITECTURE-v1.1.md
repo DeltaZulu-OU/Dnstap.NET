@@ -1,5 +1,7 @@
 # Dnstap.NET — Architecture Baseline v1.1
 
+> **Historical/superseded.** The current, narrower [Architecture Baseline v1.2](ARCHITECTURE-v1.2.md) limits Dnstap.NET to **emitting dnstap logs from .NET DNS servers or proxies**. Proposed receivers, public message abstractions, metrics, queues, reconnection, and NativeAOT requirements in this document no longer govern implementation.
+
 We will implement Dnstap.NET as a single, fully managed .NET library, with Frame Streams encapsulated internally. The public API will expose dnstap messaging, sending, receiving, and configuration without exposing framing or handshake primitives. This establishes the architecture for implementation, and it does not imply that the components have already been developed or tested.
 
 Version 1.1 incorporates a review of the C, Go, and CoreDNS implementations and a set of validation tests run on 2026-11-14. Section 8 records the evidence, and section 9 lists the decisions that remain open.
