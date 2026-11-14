@@ -123,22 +123,28 @@ internal static class FileFrameSession
                     buffered = remaining;
                 }
 
-                // Grow only after FrameCodec has validated the declared length.
-                if (buffered == buffer.Length)
+                // TryRead has already checked the declared length against the
+                // configured limit. Size the rental from the complete frame
+                // length as soon as its header is known, even when the current
+                // buffer is not yet full after compaction.
+                int needed = buffered + 1;
+                if (buffered >= 4)
                 {
-                    int maximum = Math.Max(FrameCodec.MaxControlLength + 8, maxDataLength + 4);
-                    if (buffered >= maximum)
-                        throw new InvalidDataException("Frame cannot fit within the configured maximum.");
-                    // TryRead already validated the declared length against maxDataLength.
-                    // Size directly for the incomplete frame, avoiding repeated doubling
-                    // and copying when a large frame follows a small one.
                     uint declaredLength = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(0, 4));
-                    int needed = declaredLength == 0
-                        ? checked((int)BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(4, 4)) + 8)
-                        : checked((int)declaredLength + 4);
-                    int capacity = Math.Min(maximum, Math.Max(buffered + 1, needed));
-                    byte[] grown = ArrayPool<byte>.Shared.Rent(capacity);
-                    Array.Copy(buffer, grown, buffered);
+                    needed = declaredLength != 0
+                        ? checked((int)declaredLength + 4)
+                        : buffered >= 8
+                            ? checked((int)BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(4, 4)) + 8)
+                            : 8;
+                }
+
+                int maximum = Math.Max(FrameCodec.MaxControlLength + 8, maxDataLength + 4);
+                if (needed > maximum)
+                    throw new InvalidDataException("Frame cannot fit within the configured maximum.");
+                if (needed > buffer.Length)
+                {
+                    byte[] grown = ArrayPool<byte>.Shared.Rent(needed);
+                    buffer.AsSpan(0, buffered).CopyTo(grown);
                     ArrayPool<byte>.Shared.Return(buffer);
                     buffer = grown;
                 }
