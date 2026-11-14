@@ -44,7 +44,7 @@ public sealed class FrameWireSpecificationTests
         Assert.AreEqual(0, frame.Control.ContentTypes.Count);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("0000000000000000")]
     [DataRow("0000000000000003")]
     [DataRow("0000000000000201")]
@@ -75,7 +75,7 @@ public sealed class FrameWireSpecificationTests
         ExpectInvalid(() => FrameCodec.EncodeData(new byte[(96 * 1024) + 1]));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("000000036162")]
     [DataRow("000000016162")]
     [DataRow("000000000000000500000003")]
