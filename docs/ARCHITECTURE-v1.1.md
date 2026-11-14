@@ -108,7 +108,7 @@ These are mandatory implementation rules.
 | Trust | A TLS trust anchor that fails to load is a fatal configuration error. Chain validation uses a custom root trust store with no fallback to system roots |
 | Receiver limits | Cap concurrent connections. A full receive channel stops reading, which pushes back through TCP |
 
-`FrameSession` will own the protocol state from connection establishment through shutdown. It will not create a temporary negotiation reader and then discard that reader's buffered bytes. Each invariant has at least one test, and the rows added in v1.1 trace to defects listed in section 8.
+`FrameSession` will own the protocol state from connection establishment through shutdown. It will not create a temporary negotiation reader and then discard that reader's buffered bytes. Each invariant requires at least one test before its corresponding implementation is considered complete; current coverage is reported by the TDD tests and CI. The rows added in v1.1 trace to defects listed in section 8.
 
 ## 5. Public API contract
 
