@@ -17,13 +17,14 @@ internal static class FileFrameSession
 
         byte[] buffer = ArrayPool<byte>.Shared.Rent(8192);
         int buffered = 0;
+        int start = 0;
         bool started = false;
         try
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var sequence = new ReadOnlySequence<byte>(buffer.AsMemory(0, buffered));
+                var sequence = new ReadOnlySequence<byte>(buffer.AsMemory(start, buffered - start));
                 OperationStatus result = FrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed, maxDataLength);
                 if (result == OperationStatus.InvalidData)
                     throw new InvalidDataException("Malformed Frame Streams frame.");
@@ -64,8 +65,8 @@ internal static class FileFrameSession
                         payload = frame.Payload.ToArray();
                     }
 
-                    int used = checked((int)consumed);
-                    int remaining = buffered - used;
+                    start += checked((int)consumed);
+                    int remaining = buffered - start;
                     if (stop)
                     {
                         if (remaining != 0)
@@ -78,15 +79,47 @@ internal static class FileFrameSession
                         yield break;
                     }
 
-                    if (remaining > 0)
-                        Array.Copy(buffer, used, buffer, 0, remaining);
-                    buffered = remaining;
+                    if (remaining == 0)
+                    {
+                        start = 0;
+                        buffered = 0;
+                        // Release a megabyte-sized rental as soon as it is drained.
+                        if (buffer.Length > 8192)
+                        {
+                            ArrayPool<byte>.Shared.Return(buffer);
+                            buffer = ArrayPool<byte>.Shared.Rent(8192);
+                        }
+                    }
+                    // Otherwise keep [start, buffered) as a borrowed slice.
+                    // Do not move bytes once for each frame.
                     if (payload is not null)
                         yield return payload;
                     continue;
                 }
 
-                // NeedMoreData: grow only after FrameCodec has validated the declared length.
+                // NeedMoreData: compact at most once per stream read, never per frame.
+                // After a large frame, switch back to the normal buffer if the
+                // incomplete tail is small enough.
+                if (start > 0)
+                {
+                    int remaining = buffered - start;
+                    if (buffer.Length > 8192 && remaining <= 8192)
+                    {
+                        byte[] smaller = ArrayPool<byte>.Shared.Rent(8192);
+                        buffer.AsSpan(start, remaining).CopyTo(smaller);
+                        ArrayPool<byte>.Shared.Return(buffer);
+                        buffer = smaller;
+                    }
+                    else if (remaining > 0)
+                    {
+                        buffer.AsSpan(start, remaining).CopyTo(buffer);
+                    }
+
+                    start = 0;
+                    buffered = remaining;
+                }
+
+                // Grow only after FrameCodec has validated the declared length.
                 if (buffered == buffer.Length)
                 {
                     int maximum = Math.Max(FrameCodec.MaxControlLength + 8, maxDataLength + 4);
