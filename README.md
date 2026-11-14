@@ -1,17 +1,18 @@
 # Dnstap.NET
 
-Dnstap.NET is a planned managed .NET 10 dnstap library. Frame Streams protocol support is internal; it is **not** a separate Fstrm.NET package.
+Dnstap.NET is a managed .NET 10 dnstap library under development. Frame Streams is implemented **internally**, not as a separate Fstrm.NET project.
 
-The repository currently contains the architecture, normative Frame Streams specification, and CI/test infrastructure. The protocol and protobuf implementation have not yet been merged.
+The first phase provides internal Frame Streams encoding, incremental decoding, and strict unidirectional file-mode reading/writing, with MSTest coverage. The public Dnstap API, Google.Protobuf schema/mapping, bidirectional TCP negotiation, and cross-language interoperability remain future milestones.
 
 - [Architecture Baseline v1.1](docs/ARCHITECTURE-v1.1.md)
-- [Frame Streams protocol specification](docs/FRAMESTREAMS-PROTOCOL.md)
-- [TDD, branching and CI policy](docs/TDD.md)
+- [Internal Frame Streams protocol specification](docs/FRAMESTREAMS-PROTOCOL.md)
+- [TDD and CI workflow](docs/TDD.md)
+- [Future DNS-collector interoperability suite](docs/DNS-COLLECTOR-INTEROP.md)
 
-### Development
+## Development
 
-Keep `main` passing. Protocol test development proceeds in [`test/framestreams-protocol-specifications`](https://github.com/zbalkan/Dnstap.NET/tree/test/framestreams-protocol-specifications) through Red, Green and Refactor before integration. A Red branch may have failing tests by design; build and restore failures are not accepted.
+The default branch must remain green. Develop experimental Red/Green/Refactor work on feature branches. After passing all applicable CI tests, merge validated changes directly into `main` without pull requests.
 
-`dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release`
+Run tests: `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release`
 
-Cross-language C/Go test fixtures and independent interoperability remain to be added. A green infrastructure check is **not** evidence of implemented protocol behavior.
+Tests currently use deterministic internal literal frames, not independently captured C/Go fixtures. A passing suite does **not** yet establish protocol interoperability.

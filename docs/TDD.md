@@ -14,7 +14,7 @@ Authoritative sources: [Architecture Baseline v1.1](ARCHITECTURE-v1.1.md), [Fram
 4. **Interop gate**: validate against C/Go input/output; a self-roundtrip is never sufficient evidence.
 5. **AOT gate**: once protobuf is introduced, publish/run a native executable under CI and verify warnings.
 
-The workflow restores, builds and runs MSTest in Release on each push and pull request. TRX artifacts upload even on failure. CI runs from branch pushes without a PR. Duplicate PR/push jobs can be canceled using a single concurrency key. Red is an expected state only on the feature branch: do not use `continue-on-error`, disable tests, or claim main is healthy while failing.
+The workflow restores, builds and runs MSTest in Release on every branch push and on manual dispatch. Pull requests are not used for this repository. TRX artifacts upload even on failure. CI runs from branch pushes without a PR. Repeated pushes to the same branch can cancel superseded runs using a branch-scoped concurrency key. Red is an expected state only on the feature branch: do not use `continue-on-error`, disable tests, or claim main is healthy while failing.
 
 ## Test design requirements
 
@@ -24,7 +24,7 @@ The workflow restores, builds and runs MSTest in Release on each push and pull r
 - Verify writer disposal sends STOP exactly once, even under repeated calls; verify ownership and cleanup using an instrumented stream.
 - Use `Assert.ThrowsExactly` and `Assert.ThrowsExactlyAsync` when exception assertions are appropriate. Do not write generic wrappers that hide unexpected exceptions.
 - Favor behavior-focused tests over APIs fixed too early. Use internal `IBufferWriter<byte>` for output; do not mandate one allocated `byte[]` per frame.
-- Tests that require an implemented protocol should only appear on the feature branch during Red. The default branch contains only passing infrastructure tests until real behavior is merged.
+- Tests that require an implemented protocol should only appear on the feature branch during Red. The default branch contains only passing tests and implementations; protocol work is integrated only once the corresponding feature branch is green.
 
 The SDK and Actions dependencies are pinned. Restore/build warnings are errors across production and tests. Failed restore/build steps must be fixed rather than counted as successful Red results.
 
