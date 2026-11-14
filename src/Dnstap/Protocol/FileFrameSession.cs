@@ -178,6 +178,7 @@ internal sealed class FrameSequenceWriter(
     private bool _started;
     private bool _completed;
     private bool _faulted;
+    internal bool IsFaulted => Volatile.Read(ref _faulted);
     private bool _disposed;
 
     internal async Task StartAsync(CancellationToken cancellationToken = default)

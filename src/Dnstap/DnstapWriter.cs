@@ -193,7 +193,7 @@ public sealed class DnstapWriter : IAsyncDisposable
                 return;
             try
             {
-                if (_mode == DnstapStreamMode.Duplex && _started && !_finished && !_faulted)
+                if (_mode == DnstapStreamMode.Duplex && _started && !_finished && !_faulted && !_frames.IsFaulted)
                     await CompleteStartedAsync(CancellationToken.None).ConfigureAwait(false);
             }
             finally
