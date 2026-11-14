@@ -1,0 +1,34 @@
+name: Protocol specifications
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore tests/Dnstap.Tests/Dnstap.Tests.csproj
+      - name: Build
+        run: dotnet build tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release --no-restore
+      - name: Run MSTest specifications
+        run: dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release --no-build --no-restore --logger "trx;LogFileName=protocol-tests.trx" --results-directory TestResults
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protocol-test-results
+          path: TestResults/**/*.trx
+          if-no-files-found: warn
