@@ -16,6 +16,7 @@ public sealed class DnstapWriter : IAsyncDisposable
     private readonly int _maxDataLength;
     private readonly SemaphoreSlim _completionGate = new(1, 1);
     private int _startAttempted;
+    private int _disposed;
     private bool _finished;
 
     public DnstapWriter(Stream stream, bool leaveOpen = true, int maxDataLength = 96 * 1024)
@@ -37,6 +38,7 @@ public sealed class DnstapWriter : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         if (Interlocked.Exchange(ref _startAttempted, 1) != 0)
             throw new InvalidOperationException("Writer has already started.");
 
@@ -59,6 +61,7 @@ public sealed class DnstapWriter : IAsyncDisposable
 
     public Task WriteAsync(Dnstap message, CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(message);
         if (!message.IsInitialized())
             throw new ArgumentException("dnstap required fields are missing.", nameof(message));
@@ -70,9 +73,11 @@ public sealed class DnstapWriter : IAsyncDisposable
 
     public async Task CompleteAsync(CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         await _completionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ThrowIfDisposed();
             if (_finished)
                 return;
 
@@ -109,5 +114,15 @@ public sealed class DnstapWriter : IAsyncDisposable
         return control!;
     }
 
-    public ValueTask DisposeAsync() => _frames.DisposeAsync();
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(DnstapWriter));
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+        return _frames.DisposeAsync();
+    }
 }
