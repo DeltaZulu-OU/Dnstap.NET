@@ -26,6 +26,8 @@ The workflow restores, builds and runs MSTest in Release on every branch push an
 - Favor behavior-focused tests over APIs fixed too early. Use internal `IBufferWriter<byte>` for output; do not mandate one allocated `byte[]` per frame.
 - Tests that require an implemented protocol should only appear on the feature branch during Red. The default branch contains only passing tests and implementations; protocol work is integrated only once the corresponding feature branch is green.
 
-Validated experimental work is integrated into `main` via a no-fast-forward merge commit without a pull request, retaining the individual implementation and test commits. The SDK and Actions dependencies are pinned. Restore/build warnings are errors across production and tests. Failed restore/build steps must be fixed rather than counted as successful Red results.
+Validated experimental work is integrated into `main` via a no-fast-forward merge commit without a pull request, retaining the individual implementation and test commits.
+
+**Regression bisection:** Feature branches deliberately include Red commits, so a normal `git bisect` over the merged history may check out a commit with expected failing tests. When bisecting the default branch's integrated states, use `git bisect start --first-parent` to follow the merge/mainline history. This does not replace a focused investigation of a feature branch when needed. The SDK and Actions dependencies are pinned. Restore/build warnings are errors across production and tests. Failed restore/build steps must be fixed rather than counted as successful Red results.
 
 Commit messages start with a past-tense verb and no prefix. Keep independent changes in separate commits.
