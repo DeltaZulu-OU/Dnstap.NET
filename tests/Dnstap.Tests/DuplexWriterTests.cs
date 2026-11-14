@@ -179,6 +179,36 @@ public sealed class DuplexWriterTests
         Assert.AreEqual(4, stream.WriteCalls);
     }
 
+
+    [TestMethod]
+    public async Task StalledStopWriteTimesOutWithoutDependingOnCallerCancellation()
+    {
+        await using var stream = new ScriptedDuplexStream(
+            Convert.FromHexString("000000000000000400000001"), stallWriteOn: 3);
+        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
+            operationTimeout: TimeSpan.FromMilliseconds(100));
+        await writer.StartAsync();
+        Task completing = writer.CompleteAsync();
+        await Assert.ThrowsExactlyAsync<TimeoutException>(
+            () => completing.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.IsTrue(completing.IsCompleted, "The writer must enforce the timeout itself.");
+        await writer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    [TestMethod]
+    public async Task StalledStopCannotHangImplicitDuplexDisposal()
+    {
+        await using var stream = new ScriptedDuplexStream(
+            Convert.FromHexString("000000000000000400000001"), stallWriteOn: 3);
+        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
+            operationTimeout: TimeSpan.FromMilliseconds(100));
+        await writer.StartAsync();
+        Task disposing = writer.DisposeAsync().AsTask();
+        await Assert.ThrowsExactlyAsync<TimeoutException>(
+            () => disposing.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.IsTrue(disposing.IsCompleted, "Dispose must enforce its own STOP timeout.");
+    }
+
     private static global::Dnstap.Dnstap Message() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
