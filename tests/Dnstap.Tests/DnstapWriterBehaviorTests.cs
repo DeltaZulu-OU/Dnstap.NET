@@ -133,6 +133,36 @@ public sealed class DnstapWriterBehaviorTests
         await writer.CompleteAsync();
     }
 
+
+    [TestMethod]
+    public async Task UnknownRequiredEnumValuesAreRejectedBeforeWritingData()
+    {
+        await using var stream = new MemoryStream();
+        await using var writer = new DnstapWriter(stream);
+        await writer.StartAsync();
+        long before = stream.Length;
+
+        var unknownEnvelope = Sample();
+        unknownEnvelope.Type = (global::Dnstap.Dnstap.Types.Type)99;
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() => writer.WriteAsync(unknownEnvelope));
+        Assert.AreEqual(before, stream.Length);
+
+        var unknownMessage = Sample();
+        unknownMessage.Message.Type = (global::Dnstap.Message.Types.Type)99;
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() => writer.WriteAsync(unknownMessage));
+        Assert.AreEqual(before, stream.Length);
+        await writer.CompleteAsync();
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(-1)]
+    public void InvalidPublicSendLimitIsRejected(int limit)
+    {
+        using var stream = new MemoryStream();
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapWriter(stream, maxDataLength: limit));
+    }
+
     private static global::Dnstap.Dnstap Sample() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
