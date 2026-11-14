@@ -48,3 +48,37 @@ jobs:
           name: protocol-test-results
           path: TestResults/**/*.trx
           if-no-files-found: warn
+
+  file-interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact .NET SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Set up pinned Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: '1.25.6'
+      - name: Build Tapper
+        run: dotnet restore Tapper/Tapper.csproj && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+      - name: Install pinned independent Go dnstap reader
+        run: GOBIN="${{ runner.temp }}/dnstap-tools" go install github.com/dnstap/golang-dnstap/dnstap@ebb538e7d351a58861a8f348491828214a1d8db2
+      - name: Validate Tapper output in independent implementation
+        run: |
+          set -euo pipefail
+          dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- file --output "${{ runner.temp }}/tapper.fstrm" --count 3
+          "${{ runner.temp }}/dnstap-tools/dnstap" -j -r "${{ runner.temp }}/tapper.fstrm" > "${{ runner.temp }}/tapper.jsonl"
+          jq -s -e 'length == 3 and all(.[]; .type == "MESSAGE" and .identity == "tapper" and .message.type == "CLIENT_QUERY" and .message.socket_protocol == "UDP" and .message.query_address == "192.0.2.10" and .message.response_port == 53 and (.message.query_message | contains("example.com.")))' "${{ runner.temp }}/tapper.jsonl"
+      - name: Upload independent decode evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: independent-file-interop
+          path: |
+            ${{ runner.temp }}/tapper.fstrm
+            ${{ runner.temp }}/tapper.jsonl
+          if-no-files-found: warn
