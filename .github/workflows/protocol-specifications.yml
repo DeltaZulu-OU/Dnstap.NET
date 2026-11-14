@@ -73,6 +73,25 @@ jobs:
           dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- file --output "${{ runner.temp }}/tapper.fstrm" --count 3
           "${{ runner.temp }}/dnstap-tools/dnstap" -j -r "${{ runner.temp }}/tapper.fstrm" > "${{ runner.temp }}/tapper.jsonl"
           jq -s -e 'length == 3 and all(.[]; .type == "MESSAGE" and .identity == "tapper" and .message.type == "CLIENT_QUERY" and .message.socket_protocol == "UDP" and .message.query_address == "192.0.2.10" and .message.response_port == 53 and (.message.query_message | contains("example.com.")))' "${{ runner.temp }}/tapper.jsonl"
+      - name: Validate Tapper duplex output in independent Go receiver
+        run: |
+          set -euo pipefail
+          "${{ runner.temp }}/dnstap-tools/dnstap" -j -l 127.0.0.1:16053 > "${{ runner.temp }}/socket.jsonl" 2> "${{ runner.temp }}/socket.stderr" &
+          reader=$!
+          trap 'kill "$reader" 2>/dev/null || true' EXIT
+          ready=0
+          for i in {1..100}; do
+            if ss -ltn | grep -qE ':16053[[:space:]]'; then ready=1; break; fi
+            kill -0 "$reader" || { cat "${{ runner.temp }}/socket.stderr"; exit 1; }
+            sleep 0.1
+          done
+          [[ "$ready" -eq 1 ]]
+          dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16053 --count 3
+          for i in {1..100}; do
+            if [[ "$(wc -l < "${{ runner.temp }}/socket.jsonl")" -ge 3 ]]; then break; fi
+            sleep 0.1
+          done
+          jq -s -e 'length == 3 and all(.[]; .type == "MESSAGE" and .identity == "tapper" and .message.type == "CLIENT_QUERY" and .message.socket_protocol == "UDP" and .message.query_address == "192.0.2.10" and .message.response_port == 53 and (.message.query_message | contains("example.com.")))' "${{ runner.temp }}/socket.jsonl"
       - name: Upload independent decode evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -81,4 +100,6 @@ jobs:
           path: |
             ${{ runner.temp }}/tapper.fstrm
             ${{ runner.temp }}/tapper.jsonl
+            ${{ runner.temp }}/socket.jsonl
+            ${{ runner.temp }}/socket.stderr
           if-no-files-found: warn
