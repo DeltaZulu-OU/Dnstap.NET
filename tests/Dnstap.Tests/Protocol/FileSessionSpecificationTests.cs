@@ -287,6 +287,35 @@ public sealed class FileSessionSpecificationTests
     }
 
 
+
+    [TestMethod]
+    public async Task Fs005_CustomFileSendLimitAcceptsBoundaryAndRejectsLargerPayload()
+    {
+        await using var stream = new MemoryStream();
+        await using (var writer = new FileFrameWriter(stream, maxDataLength: 4))
+        {
+            await writer.StartAsync();
+            await writer.WriteAsync(new byte[] { 1, 2, 3, 4 });
+            long beforeRejectedWrite = stream.Length;
+            await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(
+                () => writer.WriteAsync(new byte[5]));
+            Assert.AreEqual(beforeRejectedWrite, stream.Length);
+            await writer.CompleteAsync();
+        }
+        stream.Position = 0;
+        var messages = await ReadAllAsync(stream);
+        Assert.HasCount(1, messages);
+        CollectionAssert.AreEqual(new byte[] { 1, 2, 3, 4 }, messages[0]);
+    }
+
+    [TestMethod]
+    public void Fs005_InvalidCustomFileSendLimitIsRejected()
+    {
+        using var stream = new MemoryStream();
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => new FileFrameWriter(stream, maxDataLength: 0));
+    }
+
     [TestMethod]
     public async Task Fs018_FileWriterSendsOriginalPayloadBufferWithoutCopying()
     {
