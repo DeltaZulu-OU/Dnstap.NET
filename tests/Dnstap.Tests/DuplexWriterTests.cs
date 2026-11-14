@@ -89,6 +89,57 @@ public sealed class DuplexWriterTests
         await Assert.ThrowsExactlyAsync<ObjectDisposedException>(() => writer.CompleteAsync());
     }
 
+
+    [TestMethod]
+    public async Task InterruptedFinishFaultsDuplexWriterAndCannotBeReadAgain()
+    {
+        // ACCEPT then incomplete FINISH frame header (peer closes after 6 of 8 header bytes).
+        byte[] controls = Convert.FromHexString("000000000000000400000001000000000000");
+        await using var stream = new ScriptedDuplexStream(controls);
+        await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.CompleteAsync());
+        int previousReads = stream.ReadCalls;
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        Assert.AreEqual(previousReads, stream.ReadCalls, "A failed FINISH must never be re-read.");
+    }
+
+    [TestMethod]
+    public async Task PeerClosingBeforeAcceptIsInvalidProtocolData()
+    {
+        await using var stream = new ScriptedDuplexStream([]);
+        await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+    }
+
+    [TestMethod]
+    public async Task PeerClosingBeforeFinishIsInvalidProtocolData()
+    {
+        await using var stream = new ScriptedDuplexStream(Convert.FromHexString("000000000000000400000001"));
+        await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.CompleteAsync());
+    }
+
+    [TestMethod]
+    public async Task WrongAcceptContentTypeMustBeRejected()
+    {
+        byte[] wrongAccept = Convert.FromHexString("00000000000000110000000100000001000000056F74686572");
+        await using var stream = new ScriptedDuplexStream(wrongAccept);
+        await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+    }
+
+    [TestMethod]
+    public async Task WrongFinishControlTypeMustBeRejected()
+    {
+        byte[] responses = Convert.FromHexString("000000000000000400000001000000000000000400000003");
+        await using var stream = new ScriptedDuplexStream(responses);
+        await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.CompleteAsync());
+    }
+
     private static global::Dnstap.Dnstap Message() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
@@ -104,14 +155,18 @@ public sealed class DuplexWriterTests
         private readonly MemoryStream _reads = new(responses);
         private readonly MemoryStream _writes = new();
         internal byte[] Written => _writes.ToArray();
+        internal int ReadCalls { get; private set; }
         public override bool CanRead => true;
         public override bool CanWrite => true;
         public override bool CanSeek => false;
         public override long Length => throw new NotSupportedException();
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
 
-        public override ValueTask<int> ReadAsync(Memory<byte> destination, CancellationToken cancellationToken = default) =>
-            _reads.ReadAsync(destination[..Math.Min(destination.Length, 2)], cancellationToken);
+        public override ValueTask<int> ReadAsync(Memory<byte> destination, CancellationToken cancellationToken = default)
+        {
+            ReadCalls++;
+            return _reads.ReadAsync(destination[..Math.Min(destination.Length, 2)], cancellationToken);
+        }
 
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default) =>
             _writes.WriteAsync(source, cancellationToken);

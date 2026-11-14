@@ -76,6 +76,63 @@ public sealed class DnstapWriterBehaviorTests
         Assert.IsTrue(Enum.GetNames(mode).Contains("Duplex"));
     }
 
+
+    [TestMethod]
+    public void FileWriterRejectsReadOnlyStreamAtConstruction()
+    {
+        using var stream = new MemoryStream(new byte[8], writable: false);
+        Assert.ThrowsExactly<ArgumentException>(() => new DnstapWriter(stream));
+    }
+
+    [TestMethod]
+    public async Task PreCancelledStartDoesNotPreventRetry()
+    {
+        await using var stream = new MemoryStream();
+        await using var writer = new DnstapWriter(stream);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => writer.StartAsync(cancellation.Token));
+        await writer.StartAsync();
+        await writer.CompleteAsync();
+        stream.Position = 0;
+        int count = 0;
+        await foreach (var _ in FileFrameSession.ReadAsync(stream))
+            count++;
+        Assert.AreEqual(0, count);
+    }
+
+    [TestMethod]
+    public async Task NestedMissingRequiredTypeIsRejectedBeforeDataWrite()
+    {
+        await using var stream = new MemoryStream();
+        await using var writer = new DnstapWriter(stream);
+        await writer.StartAsync();
+        long before = stream.Length;
+        var incomplete = new global::Dnstap.Dnstap
+        {
+            Type = global::Dnstap.Dnstap.Types.Type.Message,
+            Message = new global::Dnstap.Message()
+        };
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() => writer.WriteAsync(incomplete));
+        Assert.AreEqual(before, stream.Length);
+        await writer.CompleteAsync();
+    }
+
+    [TestMethod]
+    public async Task ExactMessageLimitIsAcceptedAndLargerMessageRejectedWithoutWriting()
+    {
+        var sample = Sample();
+        await using var stream = new MemoryStream();
+        await using var writer = new DnstapWriter(stream, maxDataLength: sample.CalculateSize());
+        await writer.StartAsync();
+        await writer.WriteAsync(sample);
+        long before = stream.Length;
+        sample.Identity = ByteString.CopyFromUtf8("a much longer test identity");
+        await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(() => writer.WriteAsync(sample));
+        Assert.AreEqual(before, stream.Length);
+        await writer.CompleteAsync();
+    }
+
     private static global::Dnstap.Dnstap Sample() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
