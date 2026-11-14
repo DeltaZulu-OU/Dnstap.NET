@@ -7,12 +7,13 @@ try
 {
     if (args.Length == 0 || (args[0] != "file" && args[0] != "tcp"))
     {
-        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N | Tapper tcp --host HOST --port PORT --count N");
+        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N [--no-complete] | Tapper tcp --host HOST --port PORT --count N [--no-complete]");
         return 2;
     }
 
     string mode = args[0];
-    int expectedArgs = mode == "file" ? 5 : 7;
+    bool noComplete = args.Contains("--no-complete", StringComparer.Ordinal);
+    int expectedArgs = (mode == "file" ? 5 : 7) + (noComplete ? 1 : 0);
     if (args.Length != expectedArgs ||
         !int.TryParse(GetOption(args, "--count"), out int count) || count < 0)
         throw new ArgumentException("Invalid arguments or count.");
@@ -21,7 +22,7 @@ try
     if (mode == "file")
     {
         await using var output = new FileStream(GetOption(args, "--output"), FileMode.Create, FileAccess.Write);
-        await EmitAsync(output, DnstapStreamMode.File, count, deadline.Token);
+        await EmitAsync(output, DnstapStreamMode.File, count, noComplete, deadline.Token);
     }
     else
     {
@@ -31,7 +32,7 @@ try
 
         using var client = new TcpClient();
         await client.ConnectAsync(host, port, deadline.Token);
-        await EmitAsync(client.GetStream(), DnstapStreamMode.Duplex, count, deadline.Token);
+        await EmitAsync(client.GetStream(), DnstapStreamMode.Duplex, count, noComplete, deadline.Token);
     }
 
     Console.WriteLine($"Wrote {count} dnstap records.");
@@ -46,18 +47,19 @@ catch (Exception error)
 static string GetOption(string[] arguments, string option)
 {
     for (int i = 1; i < arguments.Length - 1; i++)
-        if (arguments[i] == option)
+        if (arguments[i] == option && !arguments[i + 1].StartsWith("--", StringComparison.Ordinal))
             return arguments[i + 1];
     throw new ArgumentException($"Missing {option}.");
 }
 
-static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, CancellationToken cancellationToken)
+static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, bool noComplete, CancellationToken cancellationToken)
 {
     await using var writer = new DnstapWriter(output, mode);
     await writer.StartAsync(cancellationToken);
     for (int i = 0; i < count; i++)
         await writer.WriteAsync(CreateEvent(i), cancellationToken);
-    await writer.CompleteAsync(cancellationToken);
+    if (!noComplete)
+        await writer.CompleteAsync(cancellationToken);
 }
 
 static global::Dnstap.Dnstap CreateEvent(int index)

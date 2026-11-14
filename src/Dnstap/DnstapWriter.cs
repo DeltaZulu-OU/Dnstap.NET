@@ -87,8 +87,9 @@ public sealed class DnstapWriter : IAsyncDisposable
         if (_faulted)
             throw new InvalidOperationException("Writer is faulted.");
         ArgumentNullException.ThrowIfNull(message);
-        if (!message.IsInitialized())
-            throw new ArgumentException("dnstap required fields are missing.", nameof(message));
+        if (!message.IsInitialized() || !Enum.IsDefined(message.Type) ||
+            (message.Message is { } nested && !Enum.IsDefined(nested.Type)))
+            throw new ArgumentException("dnstap required fields must contain valid enum values.", nameof(message));
         int size = message.CalculateSize();
         if (size < 1 || size > _maxDataLength)
             throw new ArgumentOutOfRangeException(nameof(message), "dnstap message exceeds the configured frame size.");

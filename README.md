@@ -14,6 +14,8 @@ The DNS host supplies DNS packet bytes, event metadata, and the destination stre
 
 `dotnet run --project Tapper -- tcp --host 127.0.0.1 --port 6000 --count 3`
 
+Use `--no-complete` to exercise graceful disposal without calling `CompleteAsync` explicitly.
+
 CI verifies Tapper output with the pinned Go dnstap reader in both modes. The upstream schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c).
 
 [Scope](docs/ARCHITECTURE-v1.2.md) · [Protocol](docs/FRAMESTREAMS-PROTOCOL.md) · [TDD](docs/TDD.md) · [Interop](docs/DNS-COLLECTOR-INTEROP.md)
