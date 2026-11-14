@@ -65,6 +65,30 @@ public sealed class DuplexWriterTests
         Assert.AreEqual((long)duplex.Written.Length, consumed, "START/STOP must not follow a failed negotiation.");
     }
 
+    [TestMethod]
+    public async Task DisposedDuplexWriterMustNotEmitReady()
+    {
+        await using var duplex = new ScriptedDuplexStream([]);
+        var writer = new DnstapWriter(duplex, DnstapStreamMode.Duplex);
+        await writer.DisposeAsync();
+
+        await Assert.ThrowsExactlyAsync<ObjectDisposedException>(() => writer.StartAsync());
+        Assert.AreEqual(0, duplex.Written.Length);
+    }
+
+    [TestMethod]
+    public async Task CompletedAndDisposedDuplexWriterRejectsFurtherCompletion()
+    {
+        byte[] responses = Convert.FromHexString("000000000000000400000001000000000000000400000005");
+        await using var duplex = new ScriptedDuplexStream(responses);
+        var writer = new DnstapWriter(duplex, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await writer.CompleteAsync();
+        await writer.DisposeAsync();
+
+        await Assert.ThrowsExactlyAsync<ObjectDisposedException>(() => writer.CompleteAsync());
+    }
+
     private static global::Dnstap.Dnstap Message() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
