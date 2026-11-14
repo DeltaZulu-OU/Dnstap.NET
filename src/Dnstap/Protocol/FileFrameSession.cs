@@ -87,8 +87,11 @@ internal static class FileFrameSession
                         // Release a megabyte-sized rental as soon as it is drained.
                         if (buffer.Length > 8192)
                         {
+                            // Rent before returning the old buffer, so a failed
+                            // rent cannot leave the same array owned twice.
+                            byte[] smaller = ArrayPool<byte>.Shared.Rent(8192);
                             ArrayPool<byte>.Shared.Return(buffer);
-                            buffer = ArrayPool<byte>.Shared.Rent(8192);
+                            buffer = smaller;
                         }
                     }
                     // Otherwise keep [start, buffered) as a borrowed slice.
