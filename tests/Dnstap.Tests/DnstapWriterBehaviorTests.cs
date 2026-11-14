@@ -68,16 +68,6 @@ public sealed class DnstapWriterBehaviorTests
     }
 
     [TestMethod]
-    public void DuplexSenderModeMustBeSelectable()
-    {
-        Type? mode = typeof(DnstapWriter).Assembly.GetType("Dnstap.DnstapStreamMode");
-        Assert.IsNotNull(mode, "The same public writer must support a duplex collector stream.");
-        Assert.IsTrue(mode.IsEnum);
-        Assert.IsTrue(Enum.GetNames(mode).Contains("Duplex"));
-    }
-
-
-    [TestMethod]
     public void FileWriterRejectsReadOnlyStreamAtConstruction()
     {
         using var stream = new MemoryStream(new byte[8], writable: false);
@@ -167,7 +157,7 @@ public sealed class DnstapWriterBehaviorTests
     [TestMethod]
     public async Task ConcurrentPublicWritesProduceCompleteNonInterleavedRecords()
     {
-        await using var stream = new MemoryStream();
+        await using var stream = new YieldingWriteStream();
         await using (var writer = new DnstapWriter(stream))
         {
             await writer.StartAsync();
@@ -181,9 +171,10 @@ public sealed class DnstapWriterBehaviorTests
             await writer.CompleteAsync();
         }
 
-        stream.Position = 0;
+        Assert.IsFalse(stream.Overlapped, "Writes must not overlap even when the transport yields.");
+        await using var capture = new MemoryStream(stream.ToArray());
         var seen = new HashSet<uint>();
-        await foreach (var payload in FileFrameSession.ReadAsync(stream))
+        await foreach (var payload in FileFrameSession.ReadAsync(capture))
         {
             var decoded = global::Dnstap.Dnstap.Parser.ParseFrom(payload.ToArray());
             Assert.IsTrue(decoded.IsInitialized());
@@ -191,6 +182,49 @@ public sealed class DnstapWriterBehaviorTests
         }
         Assert.AreEqual(64, seen.Count);
         CollectionAssert.AreEquivalent(Enumerable.Range(0, 64).Select(i => (uint)i).ToArray(), seen.ToArray());
+    }
+
+
+    [TestMethod]
+    public async Task CancelledWriteWaitingForLockLeavesWriterUsable()
+    {
+        await using var stream = new YieldingWriteStream(blockFirstDataWrite: true);
+        await using var writer = new DnstapWriter(stream);
+        await writer.StartAsync();
+        Task first = writer.WriteAsync(Sample());
+        await stream.FirstDataWriteStarted.WaitAsync(TimeSpan.FromSeconds(3));
+
+        using var cancel = new CancellationTokenSource();
+        Task blocked = writer.WriteAsync(Sample(), cancel.Token);
+        cancel.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => blocked);
+        stream.ReleaseBlockedWrite();
+        await first;
+        await writer.WriteAsync(Sample());
+        await writer.CompleteAsync();
+
+        await using var input = new MemoryStream(stream.ToArray());
+        int count = 0;
+        await foreach (var _ in FileFrameSession.ReadAsync(input))
+            count++;
+        Assert.AreEqual(2, count);
+        Assert.IsFalse(stream.Overlapped);
+    }
+
+    [TestMethod]
+    public async Task EnvelopeWithoutNestedMessageIsRejectedWithoutWriting()
+    {
+        await using var stream = new MemoryStream();
+        await using var writer = new DnstapWriter(stream);
+        await writer.StartAsync();
+        long before = stream.Length;
+        var emptyEnvelope = new global::Dnstap.Dnstap
+        {
+            Type = global::Dnstap.Dnstap.Types.Type.Message
+        };
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() => writer.WriteAsync(emptyEnvelope));
+        Assert.AreEqual(before, stream.Length);
+        await writer.CompleteAsync();
     }
 
     private static global::Dnstap.Dnstap Sample() => new()
@@ -212,4 +246,52 @@ public sealed class DnstapWriterBehaviorTests
                 "000101000001000000000000076578616D706C6503636F6D0000010001"))
         }
     };
+}
+
+internal sealed class YieldingWriteStream(bool blockFirstDataWrite = false) : Stream
+{
+    private readonly MemoryStream _buffer = new();
+    private readonly TaskCompletionSource _firstData = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _resume = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _active;
+    private int _overlapped;
+    private int _writeCalls;
+
+    public Task FirstDataWriteStarted => _firstData.Task;
+    public bool Overlapped => Volatile.Read(ref _overlapped) != 0;
+    public byte[] ToArray() => _buffer.ToArray();
+    public void ReleaseBlockedWrite() => _resume.TrySetResult();
+
+    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    {
+        int active = Interlocked.Increment(ref _active);
+        if (active > 1) Interlocked.Exchange(ref _overlapped, 1);
+        try
+        {
+            int call = Interlocked.Increment(ref _writeCalls);
+            await Task.Yield(); // Ensure the first call is still pending when subsequent writes begin.
+            if (blockFirstDataWrite && call == 2)
+            {
+                _firstData.TrySetResult();
+                await _resume.Task.WaitAsync(cancellationToken);
+            }
+            await _buffer.WriteAsync(data, cancellationToken);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _active);
+        }
+    }
+
+    public override bool CanWrite => true;
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override Task FlushAsync(CancellationToken cancellationToken) => _buffer.FlushAsync(cancellationToken);
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
 }

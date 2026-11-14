@@ -219,6 +219,17 @@ public sealed class FrameWireSpecificationTests
         Assert.AreEqual(OperationStatus.InvalidData, ControlCodec.TryDecode(frame.Payload, out _));
     }
 
+
+    [TestMethod]
+    [DataRow("0000000200")]
+    [DataRow("000000020000000100000005")]
+    [DataRow("0000000200000001FFFFFFFF")]
+    public void IncompleteAndUnsignedOversizedControlFieldsAreRejected(string hex)
+    {
+        var payload = new ReadOnlySequence<byte>(Convert.FromHexString(hex));
+        Assert.AreEqual(OperationStatus.InvalidData, ControlCodec.TryDecode(payload, out _));
+    }
+
     [TestMethod]
     public void Fs009_UnknownControlTypeRemainsRepresentableForSessionPolicy()
     {

@@ -1,5 +1,6 @@
 using System.Buffers;
 using Dnstap.Protocol;
+using Dnstap.Tests.Protocol;
 using Google.Protobuf;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -23,6 +24,17 @@ public sealed class DuplexWriterTests
         }
 
         byte[] wire = duplex.Written;
+        CollectionAssert.AreEqual(Convert.FromHexString(
+            // READY with the dnstap content type.
+            "0000000000000022000000040000000100000016" +
+            "70726F746F6275663A646E737461702E446E73746170" +
+            // START with the same content type.
+            "0000000000000022000000020000000100000016" +
+            "70726F746F6275663A646E737461702E446E73746170" +
+            // DATA: 37-byte official protobuf message, with one query payload.
+            "0000002572210805521D000101000001000000000000076578616D706C6503636F6D00000100017801" +
+            // STOP.
+            "000000000000000400000003"), wire);
         int position = 0;
         var types = new List<uint>();
         int records = 0;
@@ -209,6 +221,61 @@ public sealed class DuplexWriterTests
         Assert.IsTrue(disposing.IsCompleted, "Dispose must enforce its own STOP timeout.");
     }
 
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task AcceptWithDnstapContentTypeIsAcceptedAndStartAdvertisesIt(bool withAlternative)
+    {
+        byte[] accept = withAlternative
+            ? WireFixture.Control(ControlTypes.Accept, "other"u8.ToArray(), WireFixture.ContentType)
+            : WireFixture.Control(ControlTypes.Accept, WireFixture.ContentType);
+        byte[] responses = WireFixture.Concat(accept, WireFixture.Control(ControlTypes.Finish));
+        await using var stream = new ScriptedDuplexStream(responses);
+        await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await writer.CompleteAsync();
+        CollectionAssert.AreEqual(WireFixture.Concat(
+            Convert.FromHexString("000000000000002200000004000000010000001670726F746F6275663A646E737461702E446E73746170"),
+            WireFixture.Start, WireFixture.Stop), stream.Written);
+    }
+
+    [TestMethod]
+    public async Task AcceptWithOneEmptyContentTypeIsRejected()
+    {
+        await using var stream = new ScriptedDuplexStream(
+            WireFixture.Control(ControlTypes.Accept, Array.Empty<byte>()));
+        await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+    }
+
+    [TestMethod]
+    public async Task ImplicitDuplexDisposeRejectsWrongFinishAfterSendingStop()
+    {
+        await using var stream = new ScriptedDuplexStream(WireFixture.Concat(
+            WireFixture.Control(ControlTypes.Accept), WireFixture.Stop));
+        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.DisposeAsync().AsTask());
+        CollectionAssert.AreEqual(WireFixture.Stop,
+            stream.Written.AsSpan(stream.Written.Length - WireFixture.Stop.Length).ToArray());
+    }
+
+    [TestMethod]
+    public async Task TimedOutDuplexWriteCancelsCooperativeUnderlyingOperation()
+    {
+        await using var stream = new ScriptedDuplexStream(
+            WireFixture.Control(ControlTypes.Accept),
+            stallWriteOn: 3, observeWriteCancellation: true);
+        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
+            operationTimeout: TimeSpan.FromMilliseconds(150));
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<TimeoutException>(() => writer.WriteAsync(Message()));
+        Assert.IsTrue(await stream.AwaitStalledWriteCancellation(TimeSpan.FromSeconds(2)),
+            "The cancellation token supplied to the actual stream write must be cancelled.");
+        await writer.DisposeAsync();
+    }
+
     private static global::Dnstap.Dnstap Message() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
@@ -219,7 +286,8 @@ public sealed class DuplexWriterTests
         }
     };
 
-    private sealed class ScriptedDuplexStream(byte[] responses, bool stallOnRead = false, int stallWriteOn = 0) : Stream
+    private sealed class ScriptedDuplexStream(byte[] responses, bool stallOnRead = false, int stallWriteOn = 0,
+        bool observeWriteCancellation = false) : Stream
     {
         private readonly MemoryStream _reads = new(responses);
         private readonly MemoryStream _writes = new();
@@ -228,6 +296,21 @@ public sealed class DuplexWriterTests
         internal int WriteCalls { get; private set; }
         private readonly TaskCompletionSource<int> _stalledRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _stalledWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _writeCancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal async Task<bool> AwaitStalledWriteCancellation(TimeSpan timeout)
+        {
+            try { await _writeCancelled.Task.WaitAsync(timeout); return true; }
+            catch (TimeoutException) { return false; }
+        }
+        private async Task StallAndObserveCancellation(CancellationToken cancellationToken)
+        {
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _writeCancelled.TrySetResult();
+                throw;
+            }
+        }
         public override bool CanRead => true;
         public override bool CanWrite => true;
         public override bool CanSeek => false;
@@ -244,7 +327,9 @@ public sealed class DuplexWriterTests
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default)
         {
             WriteCalls++;
-            if (WriteCalls == stallWriteOn) return new ValueTask(_stalledWrite.Task);
+            if (WriteCalls == stallWriteOn)
+                return new ValueTask(observeWriteCancellation
+                    ? StallAndObserveCancellation(cancellationToken) : _stalledWrite.Task);
             return _writes.WriteAsync(source, cancellationToken);
         }
 

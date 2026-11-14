@@ -20,8 +20,8 @@ public sealed class LibraryContractTests
         Type? writer = typeof(AssemblyMarker).Assembly.GetType("Dnstap.DnstapWriter");
         Assert.IsNotNull(writer, "A public Frame Streams writer must be usable by Tapper.");
         Assert.IsTrue(writer.IsPublic);
-        Assert.IsNotNull(writer.GetMethod("StartAsync"));
-        Assert.IsNotNull(writer.GetMethod("WriteAsync"));
-        Assert.IsNotNull(writer.GetMethod("CompleteAsync"));
+        Assert.IsNotNull(writer.GetMethod("StartAsync", [typeof(CancellationToken)]));
+        Assert.IsNotNull(writer.GetMethod("WriteAsync", [typeof(global::Dnstap.Dnstap), typeof(CancellationToken)]));
+        Assert.IsNotNull(writer.GetMethod("CompleteAsync", [typeof(CancellationToken)]));
     }
 }
