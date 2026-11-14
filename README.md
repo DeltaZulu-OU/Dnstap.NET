@@ -1,17 +1,15 @@
 # Dnstap.NET
 
-**A small .NET 10 library for writing dnstap-format DNS logs from a .NET DNS server or proxy.** No DNS processing, log forwarding pipeline, or receiving service.
+A small .NET 10 library for writing and decoding **dnstap** messages with Protocol Buffers and Frame Streams. It is for use by .NET DNS servers and proxies; it is **not** a DNS server, listener service, or log forwarder.
 
-The host supplies the original DNS wire packets and metadata. Dnstap.NET will encode them using the pinned dnstap protobuf schema and emit them as Frame Streams to a caller-provided file or duplex stream. The only intended public operations are writing and completing output; generated protobuf schema types are the input model. The host owns connections, retry behavior, buffering and any drop policy.
+- `src/Dnstap`: official pinned `dnstap.proto`, generated C# protobuf model, and file/duplex-stream writer.
+- `Tapper`: syslog-`logger`-style CLI, at the repository root, to emit deterministic dnstap events.
+- `tests`: unit and independent C/Go/collector interoperability tests.
 
-**Current status:** Internal file-mode Frame Streams encoding/decoding and lifecycle tests are implemented and pass CI. Protobuf integration and the minimal production writer API are **not implemented yet**. The internal reader exists for validation; a public dnstap listener is not planned.
+The DNS host supplies packet bytes, event metadata, and the destination stream. Dnstap.NET validates/serializes the protobuf message and handles Frame Streams; the host handles connections, queues, reconnects, and delivery policy. Generated protobuf classes already support serialize/parse; no duplicate public model is planned.
 
-- [Current architecture and strict scope (v1.2)](docs/ARCHITECTURE-v1.2.md)
-- [Normative Frame Streams protocol details](docs/FRAMESTREAMS-PROTOCOL.md)
-- [Red–Green–Refactor and CI](docs/TDD.md)
-- [Planned independent output interoperability tests](docs/DNS-COLLECTOR-INTEROP.md)
-- [Earlier, superseded architecture (v1.1)](docs/ARCHITECTURE-v1.1.md)
+**Current status:** Internal Frame Streams file framing is implemented. Protobuf, public writer, duplex sender and Tapper are next.
 
-Run the existing tests: `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release`.
+[Scope and steps](docs/ARCHITECTURE-v1.2.md) · [Frame Streams rules](docs/FRAMESTREAMS-PROTOCOL.md) · [TDD](docs/TDD.md) · [Interop](docs/DNS-COLLECTOR-INTEROP.md)
 
-Passing internal frame tests is **not** evidence that external collectors can yet consume protobuf dnstap records. No pull requests are required for this repository; experimental branches may be merged directly once CI passes. The repository owner handles branch deletion.
+Run tests: `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release`. CI must be green on `main`. No PRs; the repository owner deletes merged branches.
