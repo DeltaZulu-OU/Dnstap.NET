@@ -1,0 +1,102 @@
+using System.Buffers;
+using Dnstap.Protocol;
+using Google.Protobuf;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace Dnstap.Tests;
+
+[TestClass]
+public sealed class DuplexWriterTests
+{
+    [TestMethod]
+    public async Task DuplexWriterNegotiatesAndClosesAcrossFragmentedControlReads()
+    {
+        // Independent literal wire bytes: ACCEPT, then FINISH.
+        byte[] responses = Convert.FromHexString("000000000000000400000001000000000000000400000005");
+        await using var duplex = new ScriptedDuplexStream(responses);
+        await using (var writer = new DnstapWriter(duplex, DnstapStreamMode.Duplex))
+        {
+            await writer.StartAsync();
+            await writer.WriteAsync(Message());
+            await writer.CompleteAsync();
+            await writer.CompleteAsync();
+        }
+
+        byte[] wire = duplex.Written;
+        int position = 0;
+        var types = new List<uint>();
+        int records = 0;
+        while (position < wire.Length)
+        {
+            var sequence = new ReadOnlySequence<byte>(wire.AsMemory(position));
+            Assert.AreEqual(OperationStatus.Done,
+                FrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
+            position += checked((int)consumed);
+            if (frame.Kind == FrameKind.Control)
+            {
+                Assert.AreEqual(OperationStatus.Done, ControlCodec.TryDecode(frame.Payload, out ControlFrame? control));
+                types.Add(control!.Type);
+            }
+            else
+            {
+                global::Dnstap.Dnstap record = global::Dnstap.Dnstap.Parser.ParseFrom(frame.Payload.ToArray());
+                Assert.IsTrue(record.IsInitialized());
+                Assert.AreEqual(global::Dnstap.Message.Types.Type.ClientQuery, record.Message.Type);
+                records++;
+            }
+        }
+
+        CollectionAssert.AreEqual(new uint[] { ControlTypes.Ready, ControlTypes.Start, ControlTypes.Stop }, types);
+        Assert.AreEqual(1, records);
+    }
+
+    [TestMethod]
+    public async Task DuplexWriterRejectsUnexpectedAcceptWithoutSendingStart()
+    {
+        // The peer sends STOP instead of ACCEPT.
+        await using var duplex = new ScriptedDuplexStream(Convert.FromHexString("000000000000000400000003"));
+        await using (var writer = new DnstapWriter(duplex, DnstapStreamMode.Duplex))
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+
+        var sequence = new ReadOnlySequence<byte>(duplex.Written);
+        Assert.AreEqual(OperationStatus.Done, FrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
+        Assert.AreEqual(OperationStatus.Done, ControlCodec.TryDecode(frame.Payload, out ControlFrame? control));
+        Assert.AreEqual(ControlTypes.Ready, control!.Type);
+        Assert.AreEqual((long)duplex.Written.Length, consumed, "START/STOP must not follow a failed negotiation.");
+    }
+
+    private static global::Dnstap.Dnstap Message() => new()
+    {
+        Type = global::Dnstap.Dnstap.Types.Type.Message,
+        Message = new global::Dnstap.Message
+        {
+            Type = global::Dnstap.Message.Types.Type.ClientQuery,
+            QueryMessage = ByteString.CopyFrom(Convert.FromHexString("000101000001000000000000076578616D706C6503636F6D0000010001"))
+        }
+    };
+
+    private sealed class ScriptedDuplexStream(byte[] responses) : Stream
+    {
+        private readonly MemoryStream _reads = new(responses);
+        private readonly MemoryStream _writes = new();
+        internal byte[] Written => _writes.ToArray();
+        public override bool CanRead => true;
+        public override bool CanWrite => true;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> destination, CancellationToken cancellationToken = default) =>
+            _reads.ReadAsync(destination[..Math.Min(destination.Length, 2)], cancellationToken);
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default) =>
+            _writes.WriteAsync(source, cancellationToken);
+
+        public override void Flush() { }
+        public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
+}
