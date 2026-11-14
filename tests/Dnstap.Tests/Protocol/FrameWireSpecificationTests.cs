@@ -9,14 +9,6 @@ namespace Dnstap.Tests.Protocol;
 public sealed class FrameWireSpecificationTests
 {
     [TestMethod]
-    public void Fs001_DataFrameEncodingMatchesIndependentWireFixture()
-    {
-        var buffer = new ArrayBufferWriter<byte>();
-        FrameCodec.WriteData(buffer, "abc"u8);
-        CollectionAssert.AreEqual(Convert.FromHexString("00000003616263"), buffer.WrittenSpan.ToArray());
-    }
-
-    [TestMethod]
     public void Fs001_StartEncodingMatchesIndependentWireFixture()
     {
         var buffer = new ArrayBufferWriter<byte>();
@@ -164,23 +156,6 @@ public sealed class FrameWireSpecificationTests
     public void Fs004_MaxUnsignedLengthIsRejectedWithoutAllocatingPayload()
     {
         Assert.AreEqual(OperationStatus.InvalidData, WireFixture.Parse(Convert.FromHexString("FFFFFFFF"), out _, out _));
-    }
-
-    [TestMethod]
-    public void Fs005_DataAtExactly96KiBSendLimitIsAccepted()
-    {
-        var buffer = new ArrayBufferWriter<byte>();
-        FrameCodec.WriteData(buffer, new byte[96 * 1024]);
-        Assert.AreEqual((96 * 1024) + 4, buffer.WrittenCount);
-    }
-
-    [TestMethod]
-    public void Fs005_EmptyAndOversizedOutgoingFramesDoNotWritePartialHeaders()
-    {
-        var buffer = new ArrayBufferWriter<byte>();
-        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => FrameCodec.WriteData(buffer, []));
-        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => FrameCodec.WriteData(buffer, new byte[(96 * 1024) + 1]));
-        Assert.AreEqual(0, buffer.WrittenCount);
     }
 
     [TestMethod]

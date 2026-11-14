@@ -163,6 +163,36 @@ public sealed class DnstapWriterBehaviorTests
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapWriter(stream, maxDataLength: limit));
     }
 
+
+    [TestMethod]
+    public async Task ConcurrentPublicWritesProduceCompleteNonInterleavedRecords()
+    {
+        await using var stream = new MemoryStream();
+        await using (var writer = new DnstapWriter(stream))
+        {
+            await writer.StartAsync();
+            Task[] writes = Enumerable.Range(0, 64).Select(i =>
+            {
+                var message = Sample();
+                message.Message.QueryTimeNsec = (uint)i;
+                return writer.WriteAsync(message);
+            }).ToArray();
+            await Task.WhenAll(writes);
+            await writer.CompleteAsync();
+        }
+
+        stream.Position = 0;
+        var seen = new HashSet<uint>();
+        await foreach (var payload in FileFrameSession.ReadAsync(stream))
+        {
+            var decoded = global::Dnstap.Dnstap.Parser.ParseFrom(payload.ToArray());
+            Assert.IsTrue(decoded.IsInitialized());
+            Assert.IsTrue(seen.Add(decoded.Message.QueryTimeNsec));
+        }
+        Assert.AreEqual(64, seen.Count);
+        CollectionAssert.AreEquivalent(Enumerable.Range(0, 64).Select(i => (uint)i).ToArray(), seen.ToArray());
+    }
+
     private static global::Dnstap.Dnstap Sample() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,

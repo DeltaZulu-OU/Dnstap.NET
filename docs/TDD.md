@@ -8,4 +8,6 @@
 
 Test valid and invalid proto2 records, deterministic packet/metadata round-trips, frame limits, fragmentation, file START/STOP, duplex READY/ACCEPT/START/STOP/FINISH, cancellation, failures and cleanup. A local stream write does not prove receipt. Use fixed known fixture bytes and exact event counts.
 
+For each change, choose relevant happy-path, negative, null/empty, boundary, exception, state, idempotency, dependency-failure, resource, concurrency and regression scenarios. Keep unit tests independent of external services using controlled streams; reserve DNS-collector and Go processes for CI integration. Coverage is diagnostic, not proof of correctness.
+
 Commit messages begin with a past-tense verb without prefixes; group unrelated edits separately. Builds/test failures are routine debugging. Use `git bisect start --first-parent` to avoid intentional Red commits when checking integrated history.

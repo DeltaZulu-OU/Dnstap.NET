@@ -288,6 +288,31 @@ public sealed class FileSessionSpecificationTests
 
 
 
+
+    [TestMethod]
+    public async Task Fs005_DefaultFileWriterAccepts96KiBButRejectsLargerPayloadBeforeHeader()
+    {
+        await using var stream = new MemoryStream();
+        await using (var writer = new FrameSequenceWriter(stream))
+        {
+            await writer.StartAsync();
+            await writer.WriteAsync(new byte[FrameCodec.DefaultMaxSendLength]);
+            long before = stream.Length;
+            await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(
+                () => writer.WriteAsync(new byte[FrameCodec.DefaultMaxSendLength + 1]));
+            Assert.AreEqual(before, stream.Length);
+            await writer.CompleteAsync();
+        }
+        stream.Position = 0;
+        int records = 0;
+        await foreach (var payload in FileFrameSession.ReadAsync(stream))
+        {
+            Assert.AreEqual(FrameCodec.DefaultMaxSendLength, payload.Length);
+            records++;
+        }
+        Assert.AreEqual(1, records);
+    }
+
     [TestMethod]
     public async Task Fs005_CustomFileSendLimitAcceptsBoundaryAndRejectsLargerPayload()
     {

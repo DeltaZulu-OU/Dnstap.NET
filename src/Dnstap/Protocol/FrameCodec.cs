@@ -62,20 +62,6 @@ internal static class FrameCodec
         return OperationStatus.Done;
     }
 
-    internal static void WriteData(
-        IBufferWriter<byte> output,
-        ReadOnlySpan<byte> data,
-        int maxDataLength = DefaultMaxSendLength)
-    {
-        ArgumentNullException.ThrowIfNull(output);
-        if (maxDataLength <= 0 || data.Length == 0 || data.Length > maxDataLength)
-            throw new ArgumentOutOfRangeException(nameof(data));
-        Span<byte> span = output.GetSpan(4);
-        BinaryPrimitives.WriteUInt32BigEndian(span, (uint)data.Length);
-        output.Advance(4);
-        output.Write(data);
-    }
-
     internal static void WriteControl(IBufferWriter<byte> output, ControlFrame control)
     {
         ArgumentNullException.ThrowIfNull(output);
