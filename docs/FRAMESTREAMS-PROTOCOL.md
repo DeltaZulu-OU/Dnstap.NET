@@ -25,14 +25,14 @@ A zero first word indicates a control frame, never an empty data frame. Example:
 | READY | 4 | Any |
 | FINISH | 5 | 0 |
 
-CONTENT_TYPE is field ID **1**. Dnstap.NET sends `protobuf:dnstap.Dnstap`; compare these bytes exactly. A START without a content type and an ACCEPT without any content types are protocol-valid. Reject invalid field counts and unknown field IDs. In an active file session, unknown control *types* are ignored for forward compatibility, but not malformed frames.
+CONTENT_TYPE is field ID **1**. Dnstap.NET sends `protobuf:dnstap.Dnstap`; compare these bytes exactly. A START without a content type and an ACCEPT without any content types are protocol-valid. A nonempty ACCEPT list must contain the exact dnstap content type; the sender then advertises it in START. Reject invalid field counts and unknown field IDs. In an active file session, unknown control *types* are ignored for forward compatibility, but not malformed frames.
 
 ## Session order
 
 - **File (unidirectional):** START → zero or more DATA → STOP. No READY, ACCEPT or FINISH. A complete file must end at STOP; the test reader rejects truncation, invalid ordering and trailing bytes.
 - **Duplex (connected stream):** sender READY → receiver ACCEPT → sender START → zero or more DATA → sender STOP → receiver FINISH. FINISH acknowledges shutdown, not individual DATA records.
 
-The sender cannot detect a prematurely transmitted FINISH until it next reads a control frame; no background receiver is implemented. The underlying connection must already exist and be readable and writable in duplex mode.
+The sender validates FINISH when completing, but cannot detect an early FINISH during DATA transmission because no background receiver is implemented. The underlying connection must already exist and be readable and writable in duplex mode.
 
 ## Limits and failure rules
 
@@ -43,13 +43,13 @@ The sender cannot detect a prematurely transmitted FINISH until it next reads a 
 | Outgoing DATA | 1–96 KiB by default; caller may configure `maxDataLength` |
 | Test-only file reader | 1 MiB receive maximum by default |
 | Length handling | Validate before allocation or integer conversion; assemble fragmented reads |
-| Protobuf records | Validate required fields and defined required enum values before writing |
+| Protobuf records | Require a MESSAGE envelope to contain a nested message with a valid type; reject missing required fields and unknown required enum values before writing |
 | Lifecycle | START once; serialize writes; STOP once on a successful session; no STOP after a failed DATA write |
 
-A pre-cancelled `StartAsync` attempt may be retried without sending bytes. Once an I/O or protocol exchange fails after starting, treat the writer as faulted; in particular, never retry reading FINISH after a failed shutdown. `CompleteAsync` explicitly finalizes. `DisposeAsync` finalizes healthy sessions and releases resources according to `leaveOpen`.
+A pre-cancelled `StartAsync` attempt may be retried without sending bytes. Cancelling a write while waiting for the writer lock leaves it usable; cancellation or I/O failure during an actual frame write faults it. Never retry reading FINISH after a failed shutdown. `CompleteAsync` explicitly finalizes. `DisposeAsync` finalizes healthy sessions and **propagates shutdown failures, including timeouts**, while releasing the stream only if `leaveOpen` is false. Faulted sessions do not attempt STOP.
 
-Duplex reads, writes, flushes and lock waits have a configurable **30-second default timeout per operation**. A timeout prevents the caller waiting forever, but cannot guarantee that a custom stream which ignores cancellation has physically stopped its pending I/O. File operations use the caller's cancellation token and do not have this duplex timeout.
+Duplex reads, writes, flushes and lock waits have a configurable **30-second default timeout per operation**. Timeouts cancel pending underlying I/O when the stream honors cancellation, and stop awaiting I/O even if it does not. The latter does **not** guarantee the underlying operation has stopped; the caller owns that transport risk. File operations use the caller's cancellation token and do not have this duplex timeout.
 
 ## Verification
 
-Unit tests cover wire fixtures, protocol states, boundaries and failure paths. CI uses **Tapper** to exercise both file and TCP output against pinned `golang-dnstap` and DNS-collector v3.3.7. DNS-collector is permissive in some error cases; passing its ingestion test establishes compatibility, not complete protocol conformance. Keep the independent Go checks and unit specifications.
+Unit tests cover wire fixtures, protocol states, boundaries and failure paths. File-reader and strict EOF/trailing-byte tests verify a **test-only oracle**, not a shipped receiving API; libfstrm's file reader may accept truncated captures that the oracle rejects. CI uses **Tapper** to exercise both file and TCP output against pinned `golang-dnstap` and DNS-collector v3.3.7. DNS-collector is permissive in some error cases; passing its ingestion test establishes compatibility, not complete protocol conformance. Keep the independent Go checks and unit specifications.
