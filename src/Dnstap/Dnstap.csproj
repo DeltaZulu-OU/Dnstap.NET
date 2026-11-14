@@ -7,6 +7,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.36.2" />
+    <PackageReference Include="Grpc.Tools" Version="2.85.0" PrivateAssets="all" />
+    <Protobuf Include="Schema/dnstap.proto" GrpcServices="None" />
     <InternalsVisibleTo Include="Dnstap.Tests" />
   </ItemGroup>
 </Project>
