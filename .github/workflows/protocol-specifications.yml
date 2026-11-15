@@ -1,6 +1,7 @@
 name: Protocol specifications
 
 on:
+  workflow_call:
   push:
     branches:
       - '**'
@@ -29,15 +30,25 @@ jobs:
         with:
           global-json-file: global.json
       - name: Restore
-        run: dotnet restore tests/Dnstap.Tests/Dnstap.Tests.csproj
+        run: dotnet restore tests/Dnstap.Tests/Dnstap.Tests.csproj --locked-mode
       - name: Build
         run: dotnet build tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release --no-restore
       - name: Run MSTest specifications
         run: dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release --no-build --no-restore --logger "trx;LogFileName=protocol-tests.trx" --results-directory TestResults
       - name: Build Tapper
-        run: dotnet restore Tapper/Tapper.csproj && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+        run: dotnet restore Tapper/Tapper.csproj --locked-mode && dotnet build Tapper/Tapper.csproj -c Release --no-restore
       - name: Compile performance harness (do not benchmark shared runner)
-        run: dotnet restore benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj && dotnet build benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -c Release --no-restore
+        run: dotnet restore benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj --locked-mode && dotnet build benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -c Release --no-restore
+      - name: Verify release version comparison
+        run: python3 -m unittest discover -s tests -p test_release_version.py -v
+      - name: Smoke-test NuGet package creation
+        run: |
+          dotnet pack src/Dnstap/Dnstap.csproj --configuration Release --no-build --no-restore --output "${{ runner.temp }}/package-smoke"
+          python3 -c 'import glob,os,subprocess; paths=glob.glob(os.path.join(os.environ["RUNNER_TEMP"], "package-smoke", "Dnstap.NET.*.nupkg")); assert len(paths)==1, "Expected exactly one package"; subprocess.run(["python3",".github/scripts/verify-nupkg.py",paths[0]],check=True)'
+      - name: Restore external package consumer from local NuGet artifact
+        run: dotnet restore tests/PackageConsumer/PackageConsumer.csproj --source "${{ runner.temp }}/package-smoke" --source https://api.nuget.org/v3/index.json --packages "${{ runner.temp }}/package-consumer-cache"
+      - name: Run external package consumer
+        run: dotnet run --project tests/PackageConsumer/PackageConsumer.csproj --configuration Release --no-restore
       - name: Verify benchmark CLI argument forwarding
         run: |
           dotnet run -c Release --no-build --project benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -- --list flat > benchmark-list.txt
@@ -75,7 +86,7 @@ jobs:
         with:
           go-version: '1.25.6'
       - name: Build Tapper
-        run: dotnet restore Tapper/Tapper.csproj && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+        run: dotnet restore Tapper/Tapper.csproj --locked-mode && dotnet build Tapper/Tapper.csproj -c Release --no-restore
       - name: Install pinned independent Go dnstap reader
         run: GOBIN="${{ runner.temp }}/dnstap-tools" go install github.com/dnstap/golang-dnstap/dnstap@ebb538e7d351a58861a8f348491828214a1d8db2
       - name: Validate Tapper output in independent implementation
@@ -126,7 +137,7 @@ jobs:
         with:
           global-json-file: global.json
       - name: Build Tapper
-        run: dotnet restore Tapper/Tapper.csproj && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+        run: dotnet restore Tapper/Tapper.csproj --locked-mode && dotnet build Tapper/Tapper.csproj -c Release --no-restore
       - name: Download and verify DNS-collector v3.3.7
         run: |
           set -euo pipefail

@@ -75,6 +75,10 @@ Run `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release` for unit tes
 
 The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c). [Frame Streams protocol and implementation rules](docs/FRAMESTREAMS-PROTOCOL.md).
 
+## NuGet publishing
+
+The `Dnstap.NET` package is published to DeltaZulu-OU GitHub Packages through a [manual release workflow](.github/workflows/publish.yml) after protocol, Go interoperability and DNS-collector tests pass. The package version is maintained in `Directory.Build.props`. See [release instructions](docs/RELEASING.md) for release checks, package inspection, repository permissions and recovery.
+
 ## License
 
 [GNU General Public License version 3 only (GPL-3.0-only)](LICENSE).

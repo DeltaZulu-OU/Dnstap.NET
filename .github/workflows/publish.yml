@@ -1,0 +1,111 @@
+name: Publish NuGet package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dnstap-publish
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.version.outputs.package_version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Allow release only from main
+        env:
+          GIT_REF: ${{ github.ref }}
+        run: |
+          if [ "$GIT_REF" != "refs/heads/main" ]; then
+            echo "Select main when manually dispatching this publishing workflow." >&2
+            exit 1
+          fi
+      - name: Check out repository and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Read release version from Directory.Build.props
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import xml.etree.ElementTree as E; root=E.parse("Directory.Build.props").getroot(); v=[e.text.strip() for e in root.iter("Version") if e.text and e.text.strip()]; assert len(v)==1, "Expected exactly one Version element"; print(v[0])')"
+          python3 .github/scripts/check-release-version.py "$version"
+          echo "package_version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  protocol-conformance:
+    needs: validate-release
+    uses: ./.github/workflows/protocol-specifications.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: [validate-release, protocol-conformance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      PACKAGE_VERSION: ${{ needs.validate-release.outputs.package_version }}
+      RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
+      PACKAGE_OUTPUT: ${{ github.workspace }}/artifacts/packages
+      GITHUB_NUGET_SOURCE: https://nuget.pkg.github.com/DeltaZulu-OU/index.json
+    steps:
+      - name: Check out repository and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up exact .NET SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Recheck version on publishing runner
+        run: python3 .github/scripts/check-release-version.py "$PACKAGE_VERSION"
+      - name: Restore library dependencies
+        run: dotnet restore src/Dnstap/Dnstap.csproj --locked-mode
+      - name: Build release library
+        run: dotnet build src/Dnstap/Dnstap.csproj --configuration Release --no-restore
+      - name: Pack library
+        run: dotnet pack src/Dnstap/Dnstap.csproj --configuration Release --no-build --no-restore --output "$PACKAGE_OUTPUT" /p:PackageVersion="$PACKAGE_VERSION"
+      - name: Verify package contents, license and dependency metadata
+        run: python3 .github/scripts/verify-nupkg.py "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg"
+      - name: Publish to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/github-packages-nuget.config"
+          dotnet new nugetconfig --output "$RUNNER_TEMP" --force
+          mv "$RUNNER_TEMP/nuget.config" "$config"
+          dotnet nuget add source --username "${{ github.actor }}" --password "$GITHUB_TOKEN" --store-password-in-clear-text --name github --configfile "$config" "$GITHUB_NUGET_SOURCE"
+          dotnet nuget push "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg" --api-key "$GITHUB_TOKEN" --configfile "$config" --source github --skip-duplicate
+      - name: Create or verify release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
+          else
+            git tag --annotate "$RELEASE_TAG" --message "Release $RELEASE_TAG"
+            git push origin "$RELEASE_TAG"
+          fi
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "GitHub Release $RELEASE_TAG already exists."
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg"
+          fi

@@ -1,6 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Dnstap.NET</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>Managed .NET 10 dnstap Frame Streams writer and official protobuf record model.</Description>
+    <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/DeltaZulu-OU/Dnstap.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/DeltaZulu-OU/Dnstap.NET</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>dnstap;dns;framestreams;protobuf;telemetry</PackageTags>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,5 +20,6 @@
     <PackageReference Include="Grpc.Tools" Version="2.85.0" PrivateAssets="all" />
     <Protobuf Include="Schema/dnstap.proto" GrpcServices="None" />
     <InternalsVisibleTo Include="Dnstap.Tests" />
+    <None Include="PACKAGE_README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
