@@ -74,7 +74,7 @@ Test names retain the original IDs. `Sender` describes shipped functionality; `o
 | FS-016 | Honor caller cancellation and clean up incomplete operations | Sender / oracle |
 | FS-017 | Borrow test frame views without copying | Oracle |
 | FS-018 | Avoid repeated buffer compaction when reading | Oracle |
-| FS-019 | Write caller-provided frame payload without copying it again | Sender |
+| FS-019 | Preserve serialized protobuf bytes in a complete data frame | Sender |
 | FS-020 | Size read buffers from validated lengths | Oracle |
 
 ## Verification

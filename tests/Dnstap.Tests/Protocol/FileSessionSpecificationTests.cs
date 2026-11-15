@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Runtime.InteropServices;
 using Dnstap.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -255,178 +254,139 @@ public sealed class FileSessionSpecificationTests
         Assert.AreEqual(smallCount + 1, count);
     }
 
+    // The sender tests below exercise the shipped public API, not a second
+    // Frame Streams writer maintained solely by this test project.
     [TestMethod]
-    public async Task Fs011_FileWriterProducesCanonicalStartDataStop()
+    public async Task Fs011_PublicFileWriterProducesCanonicalStartDataStop()
     {
         await using var stream = new MemoryStream();
-        await using (var writer = new FrameSequenceWriter(stream))
+        var record = Example();
+        await using (var writer = new DnstapWriter(stream))
         {
             await writer.StartAsync();
-            await writer.WriteAsync("abc"u8.ToArray());
+            await writer.WriteAsync(record);
             await writer.CompleteAsync();
         }
+
+        byte[] payload = record.ToByteArray();
+        byte[] expectedData = new byte[payload.Length + 4];
+        BinaryPrimitives.WriteUInt32BigEndian(expectedData, (uint)payload.Length);
+        payload.CopyTo(expectedData.AsSpan(4));
         CollectionAssert.AreEqual(
-            WireFixture.Concat(WireFixture.Start, WireFixture.Data, WireFixture.Stop),
-            stream.ToArray());
+            WireFixture.Concat(WireFixture.Start, expectedData, WireFixture.Stop), stream.ToArray());
     }
 
     [TestMethod]
-    public async Task Fs014_RepeatedCompletionAndDisposalWritesStopExactlyOnce()
+    public async Task Fs014_PublicRepeatedCompletionAndDisposalWritesStopOnce()
     {
         await using var stream = new MemoryStream();
-        var writer = new FrameSequenceWriter(stream);
+        var writer = new DnstapWriter(stream);
         await writer.StartAsync();
-        await writer.WriteAsync("abc"u8.ToArray());
+        await writer.WriteAsync(Example());
         await writer.CompleteAsync();
         await writer.CompleteAsync();
         await writer.DisposeAsync();
         await writer.DisposeAsync();
-        CollectionAssert.AreEqual(
-            WireFixture.Concat(WireFixture.Start, WireFixture.Data, WireFixture.Stop),
-            stream.ToArray());
+
+        stream.Position = 0;
+        Assert.HasCount(1, await ReadAllAsync(stream));
     }
 
-
-
-
     [TestMethod]
-    public async Task Fs005_DefaultFileWriterAccepts96KiBButRejectsLargerPayloadBeforeHeader()
+    public async Task Fs005_CustomPublicFileLimitAcceptsExactBoundary()
     {
         await using var stream = new MemoryStream();
-        await using (var writer = new FrameSequenceWriter(stream))
-        {
-            await writer.StartAsync();
-            await writer.WriteAsync(new byte[FrameCodec.DefaultMaxSendLength]);
-            long before = stream.Length;
-            await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(
-                () => writer.WriteAsync(new byte[FrameCodec.DefaultMaxSendLength + 1]));
-            Assert.AreEqual(before, stream.Length);
-            await writer.CompleteAsync();
-        }
+        var valid = Example();
+        int exact = valid.CalculateSize();
+        await using var writer = new DnstapWriter(stream, maxDataLength: exact);
+        await writer.StartAsync();
+        await writer.WriteAsync(valid);
+        long before = stream.Length;
+        valid.Extra = Google.Protobuf.ByteString.CopyFromUtf8("one more field");
+        await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(() => writer.WriteAsync(valid));
+        Assert.AreEqual(before, stream.Length);
+        await writer.CompleteAsync();
+
         stream.Position = 0;
-        int records = 0;
-        await foreach (var payload in FileFrameSession.ReadAsync(stream))
-        {
-            Assert.AreEqual(FrameCodec.DefaultMaxSendLength, payload.Length);
-            records++;
-        }
-        Assert.AreEqual(1, records);
+        Assert.HasCount(1, await ReadAllAsync(stream));
     }
 
     [TestMethod]
-    public async Task Fs005_CustomFileSendLimitAcceptsBoundaryAndRejectsLargerPayload()
-    {
-        await using var stream = new MemoryStream();
-        await using (var writer = new FrameSequenceWriter(stream, maxDataLength: 4))
-        {
-            await writer.StartAsync();
-            await writer.WriteAsync(new byte[] { 1, 2, 3, 4 });
-            long beforeRejectedWrite = stream.Length;
-            await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(
-                () => writer.WriteAsync(new byte[5]));
-            Assert.AreEqual(beforeRejectedWrite, stream.Length);
-            await writer.CompleteAsync();
-        }
-        stream.Position = 0;
-        var messages = await ReadAllAsync(stream);
-        Assert.HasCount(1, messages);
-        CollectionAssert.AreEqual(new byte[] { 1, 2, 3, 4 }, messages[0]);
-    }
-
-    [TestMethod]
-    public void Fs005_InvalidCustomFileSendLimitIsRejected()
+    public void Fs005_InvalidPublicFileLimitIsRejected()
     {
         using var stream = new MemoryStream();
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(
-            () => new FrameSequenceWriter(stream, maxDataLength: 0));
+            () => new DnstapWriter(stream, maxDataLength: 0));
     }
 
     [TestMethod]
-    public async Task Fs019_FileWriterSendsOriginalPayloadBufferWithoutCopying()
-    {
-        byte[] payload = "abc"u8.ToArray();
-        var stream = new PayloadIdentityStream(payload);
-        await using (var writer = new FrameSequenceWriter(stream))
-        {
-            await writer.StartAsync();
-            await writer.WriteAsync(payload);
-            await writer.CompleteAsync();
-        }
-        Assert.AreEqual(1, stream.DirectPayloadWrites);
-        CollectionAssert.AreEqual(WireFixture.Concat(
-            WireFixture.Start, WireFixture.Data, WireFixture.Stop), stream.ToArray());
-    }
-
-    [TestMethod]
-    public async Task Fs014_OwnedTransportIsDisposedOnlyOnce()
+    public async Task Fs014_PublicOwnedTransportIsDisposedExactlyOnce()
     {
         var stream = new CountingStream();
-        var writer = new FrameSequenceWriter(stream, leaveOpen: false);
+        var writer = new DnstapWriter(stream, leaveOpen: false);
         await writer.StartAsync();
         await writer.DisposeAsync();
         await writer.DisposeAsync();
         Assert.AreEqual(1, stream.DisposeCount);
     }
 
-
-
     [TestMethod]
-    public async Task Fs014_ExplicitCompletionOfUnstartedWriterMustFail()
+    public async Task Fs014_PublicCompletionBeforeStartFails()
     {
         await using var stream = new MemoryStream();
-        var writer = new FrameSequenceWriter(stream);
+        var writer = new DnstapWriter(stream);
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
         await writer.DisposeAsync();
         Assert.AreEqual(0L, stream.Length);
     }
 
     [TestMethod]
-    public async Task Fs014_ExplicitCompletionOfFaultedWriterMustFail()
+    public async Task Fs014_PublicCompletionAfterFailedDataWriteFails()
     {
         var stream = new ThrowOnSecondWriteStream();
-        var writer = new FrameSequenceWriter(stream);
+        var writer = new DnstapWriter(stream);
         await writer.StartAsync();
-        await Assert.ThrowsExactlyAsync<IOException>(() => writer.WriteAsync("abc"u8.ToArray()));
+        await Assert.ThrowsExactlyAsync<IOException>(() => writer.WriteAsync(Example()));
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
         await writer.DisposeAsync();
         Assert.AreEqual(2, stream.WriteAttempts);
     }
 
     [TestMethod]
-    public async Task Fs014_DisposingUnstartedWriterCreatesNoStream()
+    public async Task Fs014_PublicDisposalBeforeStartWritesNothing()
     {
         await using var stream = new MemoryStream();
-        var writer = new FrameSequenceWriter(stream);
+        var writer = new DnstapWriter(stream);
         await writer.DisposeAsync();
-        Assert.AreEqual(0, stream.Length);
+        Assert.AreEqual(0L, stream.Length);
     }
 
     [TestMethod]
-    public async Task Fs014_FailedStartDoesNotEmitStopOnDisposal()
+    public async Task Fs014_PublicFailedStartDoesNotWriteStop()
     {
         var stream = new ThrowOnFirstWriteStream();
-        var writer = new FrameSequenceWriter(stream);
+        var writer = new DnstapWriter(stream);
         await Assert.ThrowsExactlyAsync<IOException>(() => writer.StartAsync());
         await writer.DisposeAsync();
-        Assert.AreEqual(1, stream.WriteAttempts, "No STOP write is allowed after a failed START.");
+        Assert.AreEqual(1, stream.WriteAttempts);
     }
 
     [TestMethod]
-    public async Task Fs014_FailedDataWriteDoesNotEmitStopOnDisposal()
+    public async Task Fs014_PublicFailedDataWriteDoesNotWriteStop()
     {
         var stream = new ThrowOnSecondWriteStream();
-        var writer = new FrameSequenceWriter(stream);
+        var writer = new DnstapWriter(stream);
         await writer.StartAsync();
-        await Assert.ThrowsExactlyAsync<IOException>(() => writer.WriteAsync("abc"u8.ToArray()));
+        await Assert.ThrowsExactlyAsync<IOException>(() => writer.WriteAsync(Example()));
         await writer.DisposeAsync();
         Assert.AreEqual(2, stream.WriteAttempts);
     }
 
     [TestMethod]
-    public async Task Fs014_CompletionFlushesTheUnderlyingStream()
+    public async Task Fs014_PublicCompletionFlushesStream()
     {
         var stream = new FlushCountingStream();
-        await using (var writer = new FrameSequenceWriter(stream))
+        await using (var writer = new DnstapWriter(stream))
         {
             await writer.StartAsync();
             await writer.CompleteAsync();
@@ -435,25 +395,26 @@ public sealed class FileSessionSpecificationTests
     }
 
     [TestMethod]
-    public async Task Fs011_FileWriterDoesNotWriteDataBeforeStart()
+    public async Task Fs011_PublicWriterRejectsWritesBeforeStartAndAfterCompletion()
     {
         await using var stream = new MemoryStream();
-        await using var writer = new FrameSequenceWriter(stream);
-        await Assert.ThrowsExactlyAsync<InvalidOperationException>(
-            async () => await writer.WriteAsync("abc"u8.ToArray()));
-        Assert.AreEqual(0, stream.Length);
-    }
-
-    [TestMethod]
-    public async Task Fs011_FileWriterDoesNotWriteDataAfterCompletion()
-    {
-        await using var stream = new MemoryStream();
-        await using var writer = new FrameSequenceWriter(stream);
+        await using var writer = new DnstapWriter(stream);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.WriteAsync(Example()));
+        Assert.AreEqual(0L, stream.Length);
         await writer.StartAsync();
         await writer.CompleteAsync();
-        await Assert.ThrowsExactlyAsync<InvalidOperationException>(
-            async () => await writer.WriteAsync("abc"u8.ToArray()));
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.WriteAsync(Example()));
     }
+
+    private static global::Dnstap.Dnstap Example() => new()
+    {
+        Type = global::Dnstap.Dnstap.Types.Type.Message,
+        Message = new global::Dnstap.Message
+        {
+            Type = global::Dnstap.Message.Types.Type.ClientQuery,
+            QueryMessage = Google.Protobuf.ByteString.CopyFromUtf8("abc")
+        }
+    };
 
     [TestMethod]
     public async Task Fs016_CancellationStopsFileReader()
@@ -531,22 +492,6 @@ public sealed class FileSessionSpecificationTests
         }
     }
 
-
-    private sealed class PayloadIdentityStream(byte[] expectedPayload) : MemoryStream
-    {
-        internal int DirectPayloadWrites { get; private set; }
-
-        public override ValueTask WriteAsync(
-            ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> segment)
-                && ReferenceEquals(segment.Array, expectedPayload)
-                && segment.Offset == 0 && segment.Count == expectedPayload.Length)
-                DirectPayloadWrites++;
-
-            return base.WriteAsync(buffer, cancellationToken);
-        }
-    }
 
     private sealed class CountingStream : MemoryStream
     {
