@@ -144,6 +144,66 @@ public sealed class WriterBoundaryAndLifecycleTests
         Assert.AreEqual(24, peer.BytesRead, "Graceful duplex disposal must consume FINISH.");
     }
 
+
+    [TestMethod]
+    public async Task DuplexRejects257ByteContentTypeEvenWithin512ByteFrame()
+    {
+        byte[] accept = WireFixture.Control(ControlTypes.Accept, new byte[257], WireFixture.ContentType);
+        Assert.IsLessThan(520, accept.Length, "Only the content type, not the frame length, is invalid.");
+        await using var peer = new MeteredDuplexStream(accept);
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+        CollectionAssert.AreEqual(Ready, peer.Written);
+    }
+
+    [TestMethod]
+    public async Task DuplexRejectsTruncatedAcceptFieldHeader()
+    {
+        // Five-byte ACCEPT payload: control ID (4) and one truncated field-ID byte.
+        byte[] control = Convert.FromHexString("00000000000000050000000100");
+        await using var peer = new MeteredDuplexStream(control);
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+        Assert.AreEqual(control.Length, peer.BytesRead);
+        CollectionAssert.AreEqual(Ready, peer.Written);
+    }
+
+    [TestMethod]
+    public async Task DuplexRejectsFinishContainingContentType()
+    {
+        await using var peer = new MeteredDuplexStream(WireFixture.Concat(
+            WireFixture.Control(ControlTypes.Accept),
+            WireFixture.Control(ControlTypes.Finish, Array.Empty<byte>())));
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.CompleteAsync());
+        CollectionAssert.AreEqual(WireFixture.Concat(Ready, WireFixture.Start, WireFixture.Stop), peer.Written);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+    }
+
+    [TestMethod]
+    public async Task CallerCancellationDuringDuplexWriteFaultsSessionWithoutStop()
+    {
+        await using var peer = new BlockedDataDuplexStream(WireFixture.Control(ControlTypes.Accept));
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+
+        using var cancellation = new CancellationTokenSource();
+        var record = new global::Dnstap.Dnstap
+        {
+            Type = global::Dnstap.Dnstap.Types.Type.Message,
+            Message = new global::Dnstap.Message { Type = global::Dnstap.Message.Types.Type.ClientQuery }
+        };
+        Task write = writer.WriteAsync(record, cancellation.Token);
+        await peer.DataWriteEntered.WaitAsync(TimeSpan.FromSeconds(3));
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => write);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        await writer.DisposeAsync();
+
+        CollectionAssert.AreEqual(WireFixture.Concat(Ready, WireFixture.Start), peer.Written);
+    }
+
     private static byte[] Ready => Convert.FromHexString(
         "0000000000000022000000040000000100000016" +
         "70726F746F6275663A646E737461702E446E73746170");
@@ -205,4 +265,21 @@ public sealed class WriterBoundaryAndLifecycleTests
             await base.WriteAsync(buffer, cancellationToken);
         }
     }
+    private sealed class BlockedDataDuplexStream(byte[] incoming) : MeteredDuplexStream(incoming)
+    {
+        private readonly TaskCompletionSource _dataWriteEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task DataWriteEntered => _dataWriteEntered.Task;
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (buffer.Length == 4)
+            {
+                _dataWriteEntered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            await base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
 }
