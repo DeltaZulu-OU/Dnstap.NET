@@ -10,23 +10,25 @@ public sealed class DnstapRecordFactoryTests
     [TestMethod]
     public void CreatesMetadataOnlyClientResponseWithoutInventingDnsPackets()
     {
+        var client = IPAddress.Parse("192.0.2.10");
+        var server = IPAddress.Parse("192.0.2.53");
         var record = DnstapRecordFactory.Create(new DnsLogEntry
         {
-            EventType = "client_response",
-            ClientAddress = "192.0.2.10",
-            ServerAddress = "192.0.2.53",
-            ClientPort = "53000",
-            ServerPort = "53",
-            Transport = "udp",
+            EventType = Message.Types.Type.ClientResponse,
+            ClientAddress = client,
+            ServerAddress = server,
+            ClientPort = 53000,
+            ServerPort = 53,
+            Transport = SocketProtocol.Udp,
             Timestamp = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000).AddTicks(9_999_999)
         });
 
         Assert.IsTrue(record.IsInitialized());
         Assert.AreEqual(global::Dnstap.Dnstap.Types.Type.Message, record.Type);
-        Assert.AreEqual(global::Dnstap.Message.Types.Type.ClientResponse, record.Message.Type);
+        Assert.AreEqual(Message.Types.Type.ClientResponse, record.Message.Type);
         Assert.AreEqual(SocketFamily.Inet, record.Message.SocketFamily);
-        CollectionAssert.AreEqual(IPAddress.Parse("192.0.2.10").GetAddressBytes(), record.Message.QueryAddress.ToByteArray());
-        CollectionAssert.AreEqual(IPAddress.Parse("192.0.2.53").GetAddressBytes(), record.Message.ResponseAddress.ToByteArray());
+        CollectionAssert.AreEqual(client.GetAddressBytes(), record.Message.QueryAddress.ToByteArray());
+        CollectionAssert.AreEqual(server.GetAddressBytes(), record.Message.ResponseAddress.ToByteArray());
         Assert.AreEqual(53000u, record.Message.QueryPort);
         Assert.AreEqual(53u, record.Message.ResponsePort);
         Assert.AreEqual(SocketProtocol.Udp, record.Message.SocketProtocol);
@@ -36,9 +38,7 @@ public sealed class DnstapRecordFactoryTests
         Assert.IsFalse(record.Message.HasQueryTimeNsec);
         Assert.IsFalse(record.Message.HasQueryMessage);
         Assert.IsFalse(record.Message.HasResponseMessage);
-
-        var parsed = global::Dnstap.Dnstap.Parser.ParseFrom(record.ToByteArray());
-        Assert.AreEqual(record, parsed);
+        Assert.AreEqual(record, global::Dnstap.Dnstap.Parser.ParseFrom(record.ToByteArray()));
     }
 
     [TestMethod]
@@ -48,16 +48,16 @@ public sealed class DnstapRecordFactoryTests
         var timestamp = new DateTimeOffset(2026, 11, 15, 15, 30, 0, TimeSpan.FromHours(2)).AddTicks(1234);
         var record = DnstapRecordFactory.Create(new DnsLogEntry
         {
-            EventType = "RESOLVER_QUERY",
-            ClientAddress = "2001:db8::1",
-            ServerAddress = "2001:db8::53",
-            Transport = "DOQ",
+            EventType = Message.Types.Type.ResolverQuery,
+            ClientAddress = IPAddress.Parse("2001:db8::1"),
+            ServerAddress = IPAddress.Parse("2001:db8::53"),
+            Transport = SocketProtocol.Doq,
             Timestamp = timestamp,
             QueryPacket = packet
         });
-        packet[1] = 0; // Caller may reuse the packet allocation.
+        packet[1] = 0;
 
-        Assert.AreEqual(global::Dnstap.Message.Types.Type.ResolverQuery, record.Message.Type);
+        Assert.AreEqual(Message.Types.Type.ResolverQuery, record.Message.Type);
         Assert.AreEqual(SocketFamily.Inet6, record.Message.SocketFamily);
         Assert.AreEqual(SocketProtocol.Doq, record.Message.SocketProtocol);
         Assert.AreEqual((ulong)timestamp.ToUnixTimeSeconds(), record.Message.QueryTimeSec);
@@ -69,7 +69,7 @@ public sealed class DnstapRecordFactoryTests
     [TestMethod]
     public void AcceptsUnspecifiedOptionalMetadataWithoutSettingIt()
     {
-        var record = DnstapRecordFactory.Create(new DnsLogEntry { EventType = "STUB_QUERY" });
+        var record = DnstapRecordFactory.Create(new DnsLogEntry { EventType = Message.Types.Type.StubQuery });
         Assert.IsTrue(record.IsInitialized());
         Assert.IsFalse(record.Message.HasSocketFamily);
         Assert.IsFalse(record.Message.HasSocketProtocol);
@@ -82,26 +82,31 @@ public sealed class DnstapRecordFactoryTests
     }
 
     [TestMethod]
-    [DataRow("AUTH_QUERY", 1)]
-    [DataRow("AUTH_RESPONSE", 2)]
-    [DataRow("RESOLVER_QUERY", 3)]
-    [DataRow("RESOLVER_RESPONSE", 4)]
-    [DataRow("CLIENT_QUERY", 5)]
-    [DataRow("CLIENT_RESPONSE", 6)]
-    [DataRow("FORWARDER_QUERY", 7)]
-    [DataRow("FORWARDER_RESPONSE", 8)]
-    [DataRow("STUB_QUERY", 9)]
-    [DataRow("STUB_RESPONSE", 10)]
-    [DataRow("TOOL_QUERY", 11)]
-    [DataRow("TOOL_RESPONSE", 12)]
-    [DataRow("UPDATE_QUERY", 13)]
-    [DataRow("UPDATE_RESPONSE", 14)]
-    public void MapsEveryOfficialEventTypeAndTimestampDirection(string type, int expected)
+    [DataRow(1)]
+    [DataRow(2)]
+    [DataRow(3)]
+    [DataRow(4)]
+    [DataRow(5)]
+    [DataRow(6)]
+    [DataRow(7)]
+    [DataRow(8)]
+    [DataRow(9)]
+    [DataRow(10)]
+    [DataRow(11)]
+    [DataRow(12)]
+    [DataRow(13)]
+    [DataRow(14)]
+    public void PreservesEveryOfficialEventTypeAndTimestampDirection(int numericValue)
     {
-        var instant = DateTimeOffset.UnixEpoch.AddTicks(1);
-        var message = DnstapRecordFactory.Create(new DnsLogEntry { EventType = type, Timestamp = instant }).Message;
-        Assert.AreEqual(expected, (int)message.Type);
-        if (type.EndsWith("_RESPONSE", StringComparison.Ordinal))
+        var type = (Message.Types.Type)numericValue;
+        var message = DnstapRecordFactory.Create(new DnsLogEntry
+        {
+            EventType = type,
+            Timestamp = DateTimeOffset.UnixEpoch.AddTicks(1)
+        }).Message;
+        Assert.AreEqual(type, message.Type);
+        bool response = numericValue % 2 == 0;
+        if (response)
         {
             Assert.IsTrue(message.HasResponseTimeSec);
             Assert.AreEqual(100u, message.ResponseTimeNsec);
@@ -116,47 +121,66 @@ public sealed class DnstapRecordFactoryTests
     }
 
     [TestMethod]
-    [DataRow("UDP", 1)]
-    [DataRow("TCP", 2)]
-    [DataRow("DOT", 3)]
-    [DataRow("DOH", 4)]
-    [DataRow("DNSCryptUDP", 5)]
-    [DataRow("DNSCryptTCP", 6)]
-    [DataRow("DOQ", 7)]
-    public void MapsEveryOfficialSocketProtocol(string transport, int expected)
+    [DataRow(1)]
+    [DataRow(2)]
+    [DataRow(3)]
+    [DataRow(4)]
+    [DataRow(5)]
+    [DataRow(6)]
+    [DataRow(7)]
+    public void PreservesEveryOfficialSocketProtocol(int numericValue)
     {
-        var message = DnstapRecordFactory.Create(new DnsLogEntry
+        var protocol = (SocketProtocol)numericValue;
+        var record = DnstapRecordFactory.Create(new DnsLogEntry
         {
-            EventType = "CLIENT_QUERY",
-            Transport = transport
-        }).Message;
-        Assert.AreEqual(expected, (int)message.SocketProtocol);
+            EventType = Message.Types.Type.ClientQuery,
+            Transport = protocol
+        });
+        Assert.AreEqual(protocol, record.Message.SocketProtocol);
     }
 
     [TestMethod]
-    public void RejectsUnknownEventType()
+    public void RejectsUnknownEventTypeAndSocketProtocol()
     {
-        Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
-            new DnsLogEntry { EventType = "BAD_EVENT" }));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
+            new DnsLogEntry { EventType = (Message.Types.Type)0 }));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
+            new DnsLogEntry { EventType = (Message.Types.Type)99 }));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
+            new DnsLogEntry { EventType = Message.Types.Type.ClientQuery, Transport = (SocketProtocol)99 }));
     }
 
     [TestMethod]
-    public void RejectsInvalidTransportAndPorts()
+    public void RejectsMixedIpFamiliesAndScopedIpv6()
     {
         Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
-            new DnsLogEntry { EventType = "CLIENT_QUERY", Transport = "TLS" }));
-        foreach (string invalid in new[] { "-1", "65536", "12x", " 53 ", "" })
-            Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
-                new DnsLogEntry { EventType = "CLIENT_QUERY", ClientPort = invalid }));
+            new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery,
+                ClientAddress = IPAddress.Parse("192.0.2.10"),
+                ServerAddress = IPAddress.Parse("2001:db8::1")
+            }));
+
+        Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
+            new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery,
+                ClientAddress = new IPAddress(IPAddress.Parse("fe80::1").GetAddressBytes(), 7)
+            }));
     }
 
     [TestMethod]
-    public void RejectsInvalidOrMixedIpAddresses()
+    public void AcceptsIpv4MappedIpv6AsIpv6ButDoesNotNormalizeIt()
     {
-        Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
-            new DnsLogEntry { EventType = "CLIENT_QUERY", ClientAddress = "999.999.999.999" }));
-        Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
-            new DnsLogEntry { EventType = "CLIENT_QUERY", ClientAddress = "192.0.2.10", ServerAddress = "2001:db8::1" }));
+        var mapped = IPAddress.Parse("::ffff:192.0.2.10");
+        var result = DnstapRecordFactory.Create(new DnsLogEntry
+        {
+            EventType = Message.Types.Type.ClientQuery,
+            ClientAddress = mapped,
+            ServerAddress = IPAddress.IPv6Loopback
+        });
+        Assert.AreEqual(SocketFamily.Inet6, result.Message.SocketFamily);
+        CollectionAssert.AreEqual(mapped.GetAddressBytes(), result.Message.QueryAddress.ToByteArray());
     }
 
     [TestMethod]
@@ -164,6 +188,24 @@ public sealed class DnstapRecordFactoryTests
     {
         Assert.ThrowsExactly<ArgumentNullException>(() => DnstapRecordFactory.Create(null!));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
-            new DnsLogEntry { EventType = "CLIENT_QUERY", Timestamp = DateTimeOffset.UnixEpoch.AddTicks(-1) }));
+            new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery,
+                Timestamp = DateTimeOffset.UnixEpoch.AddTicks(-1)
+            }));
+    }
+
+    [TestMethod]
+    public void ExplicitZeroPortsRemainPresent()
+    {
+        var result = DnstapRecordFactory.Create(new DnsLogEntry
+        {
+            EventType = Message.Types.Type.ClientQuery,
+            ClientPort = 0,
+            ServerPort = ushort.MaxValue
+        });
+        Assert.IsTrue(result.Message.HasQueryPort);
+        Assert.AreEqual(0u, result.Message.QueryPort);
+        Assert.AreEqual((uint)ushort.MaxValue, result.Message.ResponsePort);
     }
 }

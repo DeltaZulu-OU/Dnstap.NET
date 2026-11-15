@@ -34,23 +34,23 @@ await writer.WriteAsync(new global::Dnstap.Dnstap
 await writer.CompleteAsync();
 ```
 
-When a DNS server already has string-valued log metadata rather than DNS packet bytes, use `DnstapRecordFactory.Create(new DnsLogEntry { ... })`. It converts event type, address, port, transport and timestamp strings/values to the official protobuf fields without inventing DNS packets:
+When a DNS server already exposes native .NET DNS metadata, use `DnstapRecordFactory.Create(new DnsLogEntry { ... })`. The factory accepts typed IP addresses, numeric ports, official event/transport enums, and timestamps. The calling application is responsible for parsing any source strings; the factory never fabricates DNS packets:
 
 ```csharp
 var record = DnstapRecordFactory.Create(new DnsLogEntry
 {
-    EventType = "CLIENT_RESPONSE",
-    ClientAddress = "192.0.2.10",
-    ServerAddress = "192.0.2.53",
-    ClientPort = "53000",
-    ServerPort = "53",
-    Transport = "UDP",
+    EventType = Message.Types.Type.ClientResponse,
+    ClientAddress = System.Net.IPAddress.Parse("192.0.2.10"),
+    ServerAddress = System.Net.IPAddress.Parse("192.0.2.53"),
+    ClientPort = 53000,
+    ServerPort = 53,
+    Transport = SocketProtocol.Udp,
     Timestamp = DateTimeOffset.UtcNow
 });
 await writer.WriteAsync(record);
 ```
 
-`ClientAddress` means DNS message initiator (`query_address`); `ServerAddress` means responder (`response_address`). This mapping must not be confused with the machine observing the event. Packet fields remain unset unless original binary packet bytes are provided. See [record-construction rules](docs/RECORD-CONSTRUCTION-EVALUATION.md) for event types, validation and limitations.
+`ClientAddress` means DNS message initiator (`query_address`); `ServerAddress` means responder (`response_address`). This mapping must not be confused with the machine observing the event. The example's IP parsing happens outside the library. Packet fields remain unset unless original binary packet bytes are provided. See [record-construction rules](docs/RECORD-CONSTRUCTION-EVALUATION.md) for event types, validation and limitations.
 
 For a connected, readable/writable TCP stream, use `new DnstapWriter(stream, DnstapStreamMode.Duplex)`. The writer handles READY/ACCEPT/START and STOP/FINISH, but the caller owns the socket, TLS, reconnection and delivery policy. `CompleteAsync()` reports finalization failures; disposing a healthy duplex writer without explicit completion also performs a bounded shutdown.
 

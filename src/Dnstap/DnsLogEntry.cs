@@ -1,33 +1,37 @@
+using System.Net;
+
 namespace Dnstap;
 
 /// <summary>
-/// String-valued DNS log metadata used to build a dnstap observation.
-/// ClientAddress/ClientPort describe the DNS message initiator (dnstap query_*),
-/// and ServerAddress/ServerPort describe its responder (dnstap response_*).
-/// These roles are not necessarily the machine running this library.
+/// Typed DNS event metadata used to build a dnstap observation.
+/// ClientAddress/ClientPort identify the DNS message initiator (dnstap query_*),
+/// while ServerAddress/ServerPort identify the responder (dnstap response_*).
+/// These are wire roles, not necessarily the machine producing the observation.
 /// </summary>
 public sealed record DnsLogEntry
 {
-    /// <summary>Official dnstap event type, for example CLIENT_QUERY or RESOLVER_RESPONSE.</summary>
-    public required string EventType { get; init; }
+    /// <summary>Official dnstap observation type, including the observer perspective.</summary>
+    public required Message.Types.Type EventType { get; init; }
 
-    public string? ClientAddress { get; init; }
-    public string? ServerAddress { get; init; }
-    public string? ClientPort { get; init; }
-    public string? ServerPort { get; init; }
+    /// <summary>Message initiator, if known. The caller owns address parsing.</summary>
+    public IPAddress? ClientAddress { get; init; }
+    /// <summary>Message responder, if known. The caller owns address parsing.</summary>
+    public IPAddress? ServerAddress { get; init; }
+    public ushort? ClientPort { get; init; }
+    public ushort? ServerPort { get; init; }
 
-    /// <summary>Official socket protocol name: UDP, TCP, DOT, DOH, DOQ, DNSCryptUDP or DNSCryptTCP.</summary>
-    public string? Transport { get; init; }
+    /// <summary>Official dnstap socket transport enum, if known.</summary>
+    public SocketProtocol? Transport { get; init; }
 
     /// <summary>
-    /// Time of this observed event. A query event maps to query_time_*;
-    /// a response event maps to response_time_*. Other timestamps are not inferred.
+    /// The observed query or response instant, mapped according to EventType.
+    /// Distinct query/response timestamps may be set directly on the protobuf model.
     /// </summary>
     public DateTimeOffset? Timestamp { get; init; }
 
-    /// <summary>Original wire-format DNS query packet, if available. Never reconstructed from text.</summary>
+    /// <summary>Original wire-format DNS query packet, if available.</summary>
     public ReadOnlyMemory<byte> QueryPacket { get; init; }
 
-    /// <summary>Original wire-format DNS response packet, if available. Never reconstructed from text.</summary>
+    /// <summary>Original wire-format DNS response packet, if available.</summary>
     public ReadOnlyMemory<byte> ResponsePacket { get; init; }
 }
