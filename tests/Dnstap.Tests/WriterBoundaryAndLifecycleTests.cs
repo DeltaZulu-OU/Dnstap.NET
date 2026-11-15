@@ -204,6 +204,129 @@ public sealed class WriterBoundaryAndLifecycleTests
         CollectionAssert.AreEqual(WireFixture.Concat(Ready, WireFixture.Start), peer.Written);
     }
 
+
+    [TestMethod]
+    [DataRow("000000000000000400000080")] // Unknown control type.
+    [DataRow("000000000000000C000000010000006300000000")] // Unknown field type.
+    [DataRow("000000000000000C000000010000000100000001")] // Field length exceeds payload.
+    [DataRow("000000000000000C0000000100000001FFFFFFFF")] // Unsigned overflow candidate.
+    [DataRow("00000000000000050000000100")] // Truncated field header.
+    [DataRow("000000030000000400000001")] // Data where control is required.
+    public async Task DuplexRejectsMalformedAcceptWithoutSendingStart(string wire)
+    {
+        await using var peer = new MeteredDuplexStream(Convert.FromHexString(wire));
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+        CollectionAssert.AreEqual(Ready, peer.Written);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+    }
+
+    [TestMethod]
+    [DataRow("000000000000000400000080")] // Unknown control type.
+    [DataRow("000000000000000C000000050000006300000000")] // Illegal field type.
+    [DataRow("000000000000000C000000050000000100000001")] // Truncated field data.
+    [DataRow("000000000000000C0000000500000001FFFFFFFF")] // Unsigned field length.
+    [DataRow("00000000000000050000000500")] // Incomplete field header.
+    [DataRow("000000030000000400000005")] // Data instead of FINISH control.
+    public async Task DuplexRejectsMalformedFinishAndCannotRetry(string wire)
+    {
+        byte[] incoming = WireFixture.Concat(
+            WireFixture.Control(ControlTypes.Accept), Convert.FromHexString(wire));
+        await using var peer = new MeteredDuplexStream(incoming);
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.CompleteAsync());
+        int reads = peer.BytesRead;
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        Assert.AreEqual(reads, peer.BytesRead, "Faulted shutdown must never consume more input.");
+        CollectionAssert.AreEqual(WireFixture.Concat(Ready, WireFixture.Start, WireFixture.Stop), peer.Written);
+    }
+
+    [TestMethod]
+    [DataRow("000000000000000C00000001")] // Declares 12 bytes; only type present.
+    [DataRow("000000000000000C0000000100000001")] // Partial field type.
+    public async Task TruncatedAcceptPayloadIsRejectedWithoutStart(string wire)
+    {
+        await using var peer = new MeteredDuplexStream(Convert.FromHexString(wire));
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
+        CollectionAssert.AreEqual(Ready, peer.Written);
+    }
+
+    [TestMethod]
+    [DataRow("000000000000000C00000005")]
+    [DataRow("000000000000000C0000000500000001")]
+    public async Task TruncatedFinishPayloadFaultsSession(string wire)
+    {
+        await using var peer = new MeteredDuplexStream(WireFixture.Concat(
+            WireFixture.Control(ControlTypes.Accept), Convert.FromHexString(wire)));
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.CompleteAsync());
+        CollectionAssert.AreEqual(WireFixture.Concat(Ready, WireFixture.Start, WireFixture.Stop), peer.Written);
+    }
+
+    [TestMethod]
+    public async Task AcceptMayListTheSameDnstapTypeMultipleTimes()
+    {
+        await using var peer = new MeteredDuplexStream(WireFixture.Concat(
+            WireFixture.Control(ControlTypes.Accept,
+                "other"u8.ToArray(), WireFixture.ContentType, WireFixture.ContentType),
+            WireFixture.Control(ControlTypes.Finish)));
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        await writer.CompleteAsync();
+        CollectionAssert.AreEqual(WireFixture.Concat(Ready, WireFixture.Start, WireFixture.Stop), peer.Written);
+    }
+
+    [TestMethod]
+    public async Task CancellingAcceptReadFaultsHandshakeWithoutEmittingStartOrStop()
+    {
+        await using var peer = new PausedControlReadStream(
+            WireFixture.Control(ControlTypes.Accept), pauseOnFinish: false);
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        using var cancellation = new CancellationTokenSource();
+        Task starting = writer.StartAsync(cancellation.Token);
+        await peer.ControlReadPaused.WaitAsync(TimeSpan.FromSeconds(3));
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => starting);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        CollectionAssert.AreEqual(Ready, peer.Written);
+    }
+
+    [TestMethod]
+    public async Task CancellingFinishReadFaultsShutdownWithoutRepeatingStop()
+    {
+        await using var peer = new PausedControlReadStream(
+            WireFixture.Control(ControlTypes.Accept), pauseOnFinish: true);
+        await using var writer = new DnstapWriter(peer, DnstapStreamMode.Duplex);
+        await writer.StartAsync();
+        using var cancellation = new CancellationTokenSource();
+        Task completing = writer.CompleteAsync(cancellation.Token);
+        await peer.ControlReadPaused.WaitAsync(TimeSpan.FromSeconds(3));
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => completing);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        CollectionAssert.AreEqual(WireFixture.Concat(Ready, WireFixture.Start, WireFixture.Stop), peer.Written);
+    }
+
+    private sealed class PausedControlReadStream(byte[] incoming, bool pauseOnFinish) : MeteredDuplexStream(incoming)
+    {
+        private readonly TaskCompletionSource _paused = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task ControlReadPaused => _paused.Task;
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            // Block the ACCEPT header, or the FINISH header after ACCEPT was consumed.
+            if (!pauseOnFinish || BytesRead == incoming.Length)
+            {
+                _paused.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
     private static byte[] Ready => Convert.FromHexString(
         "0000000000000022000000040000000100000016" +
         "70726F746F6275663A646E737461702E446E73746170");
