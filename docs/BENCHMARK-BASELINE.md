@@ -24,4 +24,4 @@ The earlier benchmark observations were collected on a different host and with C
 
 Before changing performance-sensitive production code, define a target workload (rate, payload distribution, slow-receiver backpressure, latency percentiles and memory limits), reproduce baseline and candidate on equivalent machines with identical benchmark arguments, and retain raw reports.
 
-The `writer-benchmarks.yml` workflow remains manual-only on `main`.
+The BenchmarkDotNet project and its manually triggered workflow were retired after capturing this baseline. The measurements, limitations, and historical implementation remain documented here and recoverable from Git history.

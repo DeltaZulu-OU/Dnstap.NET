@@ -67,7 +67,7 @@ Append `--no-complete` to exercise automatic graceful disposal instead of explic
 
 ## Writer lifetime and performance
 
-The caller retains ownership of supplied streams by default (`leaveOpen: true`). Duplex DATA frames are written as a single length-prefixed buffer under one I/O deadline; file-mode streams have no implicit operation or disposal timeout. A duplex deadline bounds waiting, but cannot force a noncooperative underlying `Stream` operation to finish. After failure the writer becomes terminal; reconnection is the caller's responsibility. The generated protobuf type remains `global::Dnstap.Dnstap` (use an application-local alias for readability). See [writer design and API decisions](docs/WRITER-DESIGN.md) and [BenchmarkDotNet instructions](benchmarks/Dnstap.Benchmarks/README.md).
+The caller retains ownership of supplied streams by default (`leaveOpen: true`). Duplex DATA frames are written as a single length-prefixed buffer under one I/O deadline; file-mode streams have no implicit operation or disposal timeout. A duplex deadline bounds waiting, but cannot force a noncooperative underlying `Stream` operation to finish. After failure the writer becomes terminal; reconnection is the caller's responsibility. The generated protobuf type remains `global::Dnstap.Dnstap` (use an application-local alias for readability). See [writer design and API decisions](docs/WRITER-DESIGN.md).
 
 ## Build and verification
 

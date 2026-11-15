@@ -9,11 +9,6 @@ namespace Dnstap.Protocol
             string description, TimeProvider timeProvider, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(stream);
-            if (timeout is null)
-            {
-                throw new ArgumentNullException(nameof(timeout));
-            }
-
             ArgumentException.ThrowIfNullOrEmpty(description);
             ArgumentNullException.ThrowIfNull(timeProvider);
             return ExecuteAsync((stream, data), static (state, token) => state.stream.WriteAsync(state.data, token),

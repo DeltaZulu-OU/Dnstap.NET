@@ -9,10 +9,10 @@ if len(sys.argv) != 2:
     raise SystemExit("Usage: verify-nupkg.py /path/to/Dnstap.NET.VERSION.nupkg")
 
 package_path = pathlib.Path(sys.argv[1])
-props = ET.parse("Directory.Build.props").getroot()
+props = ET.parse("src/Directory.Build.props").getroot()
 versions = [e.text.strip() for e in props.iter("Version") if e.text and e.text.strip()]
 if len(versions) != 1:
-    raise SystemExit("Directory.Build.props must define exactly one Version")
+    raise SystemExit("src/Directory.Build.props must define exactly one Version")
 version = versions[0]
 if package_path.name != f"Dnstap.NET.{version}.nupkg":
     raise SystemExit(f"Unexpected package name: {package_path.name}")

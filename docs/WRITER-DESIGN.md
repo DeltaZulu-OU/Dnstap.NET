@@ -21,4 +21,4 @@ A linked CTS is created only for a cancelable caller token. Do not introduce poo
 
 ## Validation
 
-Run the repository's MSTest specifications and Go/DNS-collector interoperability tests. Use `benchmarks/Dnstap.Benchmarks` with BenchmarkDotNet for allocations and throughput on the actual runtime and target machine. Compare file and loopback-duplex paths across payload sizes, and do not claim a performance improvement solely from allocation counts.
+Run the repository's MSTest specifications and Go/DNS-collector interoperability tests. The historical measurements and their limitations are retained in [the benchmark baseline](BENCHMARK-BASELINE.md). Reintroduce a controlled benchmark harness if performance-sensitive code changes require new allocation or throughput measurements; do not infer performance improvements from functional tests.

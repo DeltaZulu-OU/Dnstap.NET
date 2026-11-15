@@ -36,11 +36,9 @@ jobs:
       - name: Run MSTest specifications
         run: dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release --no-build --no-restore --logger "trx;LogFileName=protocol-tests.trx" --results-directory TestResults
       - name: Build Tapper
-        run: dotnet restore Tapper/Tapper.csproj --locked-mode && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+        run: dotnet restore src/Tapper/Tapper.csproj --locked-mode && dotnet build src/Tapper/Tapper.csproj -c Release --no-restore
       - name: Validate solution build
-        run: dotnet build Dnstap.NET.slnx -c Release --no-restore
-      - name: Compile performance harness (do not benchmark shared runner)
-        run: dotnet restore benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj --locked-mode && dotnet build benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -c Release --no-restore
+        run: dotnet build src/Dnstap.NET.slnx -c Release --no-restore
       - name: Verify release version comparison
         run: python3 -m unittest discover -s tests -p 'test_release_*.py' -v
       - name: Verify package source mapping decisions
@@ -71,13 +69,8 @@ jobs:
             ${{ runner.temp }}/package-smoke/SHA256SUMS
           if-no-files-found: error
           retention-days: 90
-      - name: Verify benchmark CLI argument forwarding
-        run: |
-          dotnet run -c Release --no-build --project benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -- --list flat > benchmark-list.txt
-          grep -q 'FileWriterBenchmarks.WriteFrame' benchmark-list.txt
-          grep -q 'LoopbackTcpWriterBenchmarks.WriteFrame' benchmark-list.txt
       - name: Exercise public library API through Tapper
-        run: dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- file --output "${{ runner.temp }}/tapper.fstrm" --count 3
+        run: dotnet run --project src/Tapper/Tapper.csproj -c Release --no-build -- file --output "${{ runner.temp }}/tapper.fstrm" --count 3
       - name: Upload Tapper file
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -110,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd "${{ runner.temp }}/candidate" && sha256sum --check SHA256SUMS && test "$(wc -l < SHA256SUMS)" -eq 1)
-          python3 .github/scripts/verify-nupkg.py "${{ runner.temp }}/candidate/Dnstap.NET.$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("Directory.Build.props").getroot().find(".//Version").text)').nupkg"
+          python3 .github/scripts/verify-nupkg.py "${{ runner.temp }}/candidate/Dnstap.NET.$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("src/Directory.Build.props").getroot().find(".//Version").text)').nupkg"
 
   external-interop:
     runs-on: ubuntu-latest

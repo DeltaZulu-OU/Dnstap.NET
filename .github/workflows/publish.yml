@@ -30,11 +30,11 @@ jobs:
         with:
           fetch-depth: 0
       - id: version
-        name: Read release version from Directory.Build.props
+        name: Read release version from src/Directory.Build.props
         shell: bash
         run: |
           set -euo pipefail
-          version="$(python3 -c 'import xml.etree.ElementTree as E; root=E.parse("Directory.Build.props").getroot(); v=[e.text.strip() for e in root.iter("Version") if e.text and e.text.strip()]; assert len(v)==1, "Expected exactly one Version element"; print(v[0])')"
+          version="$(python3 -c 'import xml.etree.ElementTree as E; root=E.parse("src/Directory.Build.props").getroot(); v=[e.text.strip() for e in root.iter("Version") if e.text and e.text.strip()]; assert len(v)==1, "Expected exactly one Version element"; print(v[0])')"
           python3 .github/scripts/check-release-version.py "$version"
           echo "package_version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"

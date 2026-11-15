@@ -18,10 +18,10 @@ for i in {1..100}; do
 done
 [[ "$ready" -eq 1 ]] || { cat "$root/collector.log"; exit 1; }
 
-dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16054 --count 3 --no-complete
+dotnet run --project src/Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16054 --count 3 --no-complete
 # Exercise explicit completion against the same receiver as a separate TCP session.
-dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16054 --count 3
-dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- file --output "$root/tap-watch/capture.tmp" --count 3
+dotnet run --project src/Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16054 --count 3
+dotnet run --project src/Tapper/Tapper.csproj -c Release --no-build -- file --output "$root/tap-watch/capture.tmp" --count 3
 mv "$root/tap-watch/capture.tmp" "$root/tap-watch/capture.fstrm"
 
 check_records() {
