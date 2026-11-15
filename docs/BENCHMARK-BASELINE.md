@@ -1,19 +1,27 @@
-# P2 writer benchmark baseline (15 November 2026)
+# P2 writer performance baseline — corrected harness (15 November 2026)
 
-Source: GitHub Actions [run 43717103527](https://github.com/zbalkan/Dnstap.NET/actions/runs/43717103527), workflow artifact `writer-benchmark-evidence`. Commit: `7a15a273899cb5e3d9be50906d8f7c204bfcdbca`. BenchmarkDotNet 0.15.8, Ubuntu 26.04.1, .NET 10.0.15, Xeon 6975P (2 physical / 4 logical cores).
+## Source and method
 
-The original workflow **requested** `--job short --warmupCount 1 --iterationCount 3 --launchCount 1`, but the benchmark entry point did not forward its command-line arguments. These measurements therefore used BenchmarkDotNet defaults, not the documented short configuration. Moreover, TCP allocations include per-frame allocations made by the receiver. The figures below are retained only as **superseded historical observations**; do not use them as a valid controlled baseline:
+The first benchmark at [run 43717103527](https://github.com/zbalkan/Dnstap.NET/actions/runs/43717103527) is **superseded**: its entry point silently ignored the workflow's CLI configuration, and its TCP receiver allocated a new DATA buffer for every record. It cannot be used as a controlled baseline.
 
-| DNS payload bytes | File mean (ns) | File allocation (B/op) | Loopback TCP mean (ns) | TCP allocation (B/op) |
-|---:|---:|---:|---:|---:|
-| 64 | 199.7 | 216 | 893.1 | 600 |
-| 1,024 | 309.8 | 1,176 | 1,414.9 | 2,528 |
-| 8,192 | 876.7 | 8,344 | 3,860.8 | 16,851 |
+The **corrected baseline** is [GitHub Actions run 43721174860](https://github.com/zbalkan/Dnstap.NET/actions/runs/43721174860), artifact `writer-benchmark-evidence`, on branch `perf/corrected-benchmark-baseline` based on production commit `6fdc41d7cf61321864f1a5dce79460e7b8c3633e`. The only code difference from this production commit was temporarily enabling the workflow on the benchmark branch; the writer and benchmark harness were unchanged.
 
-## Interpretation and next decision
+BenchmarkDotNet 0.15.8 on Ubuntu 26.04.1, .NET 10.0.15, AMD EPYC 9V74 (2 physical / 4 logical cores). The benchmark log confirms `IterationCount=3`, `LaunchCount=1` and `WarmupCount=1` for all six cases. Short jobs on shared CI hardware are **smoke-performance measurements**, not stable production benchmarks or performance-regression gates.
 
-These are superseded single-run observations, not a before/after comparison, a workload capacity figure, or evidence of a regression. Re-run benchmarks after the command-line forwarding and receiver-buffer fixes, and replace this section with a new evidence-linked baseline. File mode writes to `Stream.Null`, so it measures serialization and writer overhead rather than disk throughput. The TCP case uses an in-process loopback peer and includes network/reader overhead and thread scheduling. Allocations scale with payload size because the writer owns a serialized frame buffer. The 8 KiB file-case standard deviation (59.25 ns) is non-negligible relative to its mean, so do not overinterpret small differences.
+| Raw DNS payload bytes | File mean | File standard deviation | File allocations | Loopback TCP mean | TCP standard deviation | TCP allocations |
+|---:|---:|---:|---:|---:|---:|---:|
+| 64 | 242.1 ns | 0.78 ns | 216 B/op | 1.823 μs | 0.0047 μs | 504 B/op |
+| 1,024 | 322.6 ns | 5.84 ns | 1,176 B/op | 2.498 μs | 0.0360 μs | 1,464 B/op |
+| 8,192 | 877.0 ns | 64.26 ns | 8,344 B/op | 6.208 μs | 0.4196 μs | 8,632 B/op |
 
-**Decision:** no further production optimization is warranted from these data alone. The single-buffer, single-deadline implementation remains. In particular, do not pool outgoing frames: a noncooperative asynchronous operation may retain the memory after timeout. To propose pooling or batching, first quantify a production target (messages/s, payload distribution, p95 latency, memory budget, behavior under slow receiver) and measure before/after with the same runner, pinned runtime and equivalent workload.
+The file-mode case uses `Stream.Null`: it estimates frame serialization, allocation, and writer overhead, **not physical disk throughput**. The TCP case uses an in-process loopback receiver. Its reusable DATA receive buffer eliminates one per-frame allocation, but BenchmarkDotNet's process-wide allocation measurement still includes background receiver and runtime allocations. TCP allocations are **not writer-only allocations**. The TCP mean includes transport scheduling and the receiver's work; it is not a network capacity measurement.
 
-Run comparisons on dedicated, stable hardware when possible; shared GitHub runners are suitable for smoke measurements, not reliable performance gating. Preserve raw BenchmarkDotNet reports as evidence.
+The earlier benchmark observations were collected on a different host and with CLI arguments ignored. Do not compute a speedup or slowdown across those measurements. Because each case has only three measured iterations, avoid treating small differences as significant.
+
+## Optimization decision
+
+**Keep the present single-owned-buffer, single-write, single-deadline implementation.** Payload-sized allocations are deliberate to keep data valid after timeouts on cancellation-ignoring streams. Do not introduce a buffer pool without an enforceable outstanding-I/O lifetime contract. The measurements by themselves do not justify batching, caching handshake control frames, or adding an uncontended lock fast path.
+
+Before changing performance-sensitive production code, define a target workload (rate, payload distribution, slow-receiver backpressure, latency percentiles and memory limits), reproduce baseline and candidate on equivalent machines with identical benchmark arguments, and retain raw reports.
+
+The `writer-benchmarks.yml` workflow remains manual-only on `main`.
