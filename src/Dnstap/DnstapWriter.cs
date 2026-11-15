@@ -7,28 +7,29 @@ namespace Dnstap;
 
 public enum DnstapStreamMode { File, Duplex }
 
-/// <summary>Emits dnstap records over Frame Streams. Callers own the transport unless leaveOpen is false.</summary>
+/// <summary>Writes dnstap Frame Streams records to a caller-provided stream.</summary>
 public sealed class DnstapWriter : IAsyncDisposable
 {
+    private enum SessionState { Created, Handshaking, Started, Completing, Completed, Faulted, Disposed }
+
     private readonly Stream _stream;
-    private readonly FrameSequenceWriter _frames;
     private readonly DnstapStreamMode _mode;
+    private readonly bool _leaveOpen;
     private readonly int _maxDataLength;
     private readonly TimeSpan _operationTimeout;
-    private readonly bool _leaveOpen;
-    private readonly SemaphoreSlim _completionGate = new(1, 1);
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ArrayBufferWriter<byte> _controlBuffer = new();
+    private readonly byte[] _dataHeader = new byte[4];
+    private SessionState _state;
     private int _startAttempted;
-    private int _disposed;
-    private bool _started;
-    private bool _faulted;
-    private bool _finished;
+    private int _disposeRequested;
 
-    /// <summary>Creates a file-mode writer. The stream must be writable.</summary>
+    /// <summary>Creates a file-mode writer. A caller-provided stream remains open by default.</summary>
     public DnstapWriter(Stream stream, bool leaveOpen = true,
         int maxDataLength = FrameCodec.DefaultMaxSendLength, TimeSpan? operationTimeout = null)
         : this(stream, DnstapStreamMode.File, leaveOpen, maxDataLength, operationTimeout) { }
 
-    /// <summary>Creates a file or duplex writer. Duplex operations have a finite per-I/O timeout (30 seconds by default).</summary>
+    /// <summary>Creates a file or duplex writer. Duplex operations default to a 30-second timeout.</summary>
     public DnstapWriter(Stream stream, DnstapStreamMode mode, bool leaveOpen = true,
         int maxDataLength = FrameCodec.DefaultMaxSendLength, TimeSpan? operationTimeout = null)
     {
@@ -37,6 +38,8 @@ public sealed class DnstapWriter : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(mode));
         if (!stream.CanWrite || (mode == DnstapStreamMode.Duplex && !stream.CanRead))
             throw new ArgumentException("The stream must be writable, and duplex streams must also be readable.", nameof(stream));
+        if (maxDataLength <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxDataLength));
 
         _operationTimeout = operationTimeout ?? TimeSpan.FromSeconds(30);
         if (_operationTimeout <= TimeSpan.Zero || _operationTimeout.TotalMilliseconds > int.MaxValue)
@@ -44,34 +47,40 @@ public sealed class DnstapWriter : IAsyncDisposable
         _stream = stream;
         _mode = mode;
         _leaveOpen = leaveOpen;
-        // Stream ownership stays here so even a failed cleanup lock releases an owned transport.
-        _frames = new FrameSequenceWriter(stream, leaveOpen: true, maxDataLength,
-            mode == DnstapStreamMode.Duplex ? _operationTimeout : null);
         _maxDataLength = maxDataLength;
     }
 
+    private TimeSpan? WriteTimeout => _mode == DnstapStreamMode.Duplex ? _operationTimeout : null;
+
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        // A pre-cancelled or lock-waiting start must not modify protocol state.
         cancellationToken.ThrowIfCancellationRequested();
         ThrowIfDisposed();
-        await WaitForCompletionGateAsync(cancellationToken).ConfigureAwait(false);
+        // Claim before waiting: a competing start must fail immediately, not time out in negotiation.
+        if (Interlocked.CompareExchange(ref _startAttempted, 1, 0) != 0)
+            throw new InvalidOperationException("Writer has already started.");
+
         try
         {
-            // Disposing may have claimed the session while this call waited.
+            await AcquireAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // No bytes or protocol state were changed while waiting for the lock.
+            Interlocked.Exchange(ref _startAttempted, 0);
+            throw;
+        }
+
+        try
+        {
             ThrowIfDisposed();
-            if (Interlocked.Exchange(ref _startAttempted, 1) != 0)
-                throw new InvalidOperationException("Writer has already started.");
+            _state = SessionState.Handshaking;
             try
             {
                 if (_mode == DnstapStreamMode.Duplex)
                 {
-                    var frame = new ArrayBufferWriter<byte>();
-                    FrameCodec.WriteControl(frame,
-                        new ControlFrame(ControlTypes.Ready,
-                            new ReadOnlyMemory<byte>[] { ControlTypes.DnstapContentType.ToArray() }));
-                    await StreamDeadline.WriteAsync(_stream, frame.WrittenMemory, _operationTimeout,
-                        cancellationToken, "Frame Streams control write").ConfigureAwait(false);
+                    await WriteControlAsync(ControlTypes.Ready, cancellationToken, withContentType: true)
+                        .ConfigureAwait(false);
                     ControlFrame accepted = await ReadControlAsync(cancellationToken).ConfigureAwait(false);
                     if (accepted.Type != ControlTypes.Accept ||
                         (accepted.ContentTypes.Count != 0 &&
@@ -79,26 +88,27 @@ public sealed class DnstapWriter : IAsyncDisposable
                         throw new InvalidDataException("Collector did not accept the dnstap content type.");
                 }
 
-                await _frames.StartAsync(cancellationToken).ConfigureAwait(false);
-                _started = true;
+                await WriteControlAsync(ControlTypes.Start, cancellationToken, withContentType: true)
+                    .ConfigureAwait(false);
+                _state = SessionState.Started;
             }
             catch
             {
-                _faulted = true;
+                _state = SessionState.Faulted;
                 throw;
             }
         }
         finally
         {
-            _completionGate.Release();
+            _gate.Release();
         }
     }
 
-    /// <summary>Writes one initialized protobuf record. Concurrent calls are serialized; call ordering is not guaranteed.</summary>
+    /// <summary>Writes one initialized record. Concurrent writes are serialized; ordering is not guaranteed.</summary>
     public Task WriteAsync(Dnstap message, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (_faulted)
+        if (_state == SessionState.Faulted)
             throw new InvalidOperationException("Writer is faulted.");
         ArgumentNullException.ThrowIfNull(message);
         if (!message.IsInitialized())
@@ -111,49 +121,87 @@ public sealed class DnstapWriter : IAsyncDisposable
         int size = message.CalculateSize();
         if (size < 1 || size > _maxDataLength)
             throw new ArgumentOutOfRangeException(nameof(message), "dnstap message exceeds the configured frame size.");
-        return _frames.WriteAsync(message.ToByteArray(), cancellationToken);
+        return WriteRecordAsync(message.ToByteArray(), cancellationToken);
     }
 
-    /// <summary>Sends STOP and, in duplex mode, waits for FINISH. A failed FINISH is terminal.</summary>
-    public async Task CompleteAsync(CancellationToken cancellationToken = default)
+    private async Task WriteRecordAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        await WaitForCompletionGateAsync(cancellationToken).ConfigureAwait(false);
+        await AcquireAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ThrowIfDisposed();
-            if (_faulted)
-                throw new InvalidOperationException("Writer is faulted.");
-            if (_finished)
+            if (_state != SessionState.Started)
+                throw new InvalidOperationException("Writer is not started, is completed, or is faulted.");
+            BinaryPrimitives.WriteUInt32BigEndian(_dataHeader, (uint)payload.Length);
+            try
+            {
+                await StreamDeadline.WriteAsync(_stream, _dataHeader, WriteTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+                await StreamDeadline.WriteAsync(_stream, payload, WriteTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                _state = SessionState.Faulted;
+                throw;
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Sends STOP and, in duplex mode, waits for FINISH. An interrupted shutdown is terminal.</summary>
+    public async Task CompleteAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await AcquireAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (_state == SessionState.Completed)
                 return;
-            if (!_started)
-                throw new InvalidOperationException("Writer must be started before completion.");
+            if (_state != SessionState.Started)
+                throw new InvalidOperationException("Writer must be started and healthy before completion.");
             await CompleteStartedAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            _completionGate.Release();
+            _gate.Release();
         }
     }
 
     private async Task CompleteStartedAsync(CancellationToken cancellationToken)
     {
+        _state = SessionState.Completing;
         try
         {
-            await _frames.CompleteAsync(cancellationToken).ConfigureAwait(false);
+            await WriteControlAsync(ControlTypes.Stop, cancellationToken).ConfigureAwait(false);
+            await StreamDeadline.FlushAsync(_stream, WriteTimeout, cancellationToken).ConfigureAwait(false);
             if (_mode == DnstapStreamMode.Duplex)
             {
                 ControlFrame finished = await ReadControlAsync(cancellationToken).ConfigureAwait(false);
                 if (finished.Type != ControlTypes.Finish)
                     throw new InvalidDataException("Expected FINISH after STOP.");
             }
-            _finished = true;
+            _state = SessionState.Completed;
         }
         catch
         {
-            _faulted = true;
+            _state = SessionState.Faulted;
             throw;
         }
+    }
+
+    private async Task WriteControlAsync(uint type, CancellationToken cancellationToken, bool withContentType = false)
+    {
+        _controlBuffer.ResetWrittenCount();
+        FrameCodec.WriteControl(_controlBuffer, withContentType
+            ? new ControlFrame(type, new ReadOnlyMemory<byte>[] { ControlTypes.DnstapContentType.ToArray() })
+            : new ControlFrame(type));
+        await StreamDeadline.WriteAsync(_stream, _controlBuffer.WrittenMemory, WriteTimeout,
+            cancellationToken, "Frame Streams control write").ConfigureAwait(false);
     }
 
     private async Task<ControlFrame> ReadControlAsync(CancellationToken cancellationToken)
@@ -165,11 +213,9 @@ public sealed class DnstapWriter : IAsyncDisposable
                 .ConfigureAwait(false);
             if (BinaryPrimitives.ReadUInt32BigEndian(header) != 0)
                 throw new InvalidDataException("Expected a Frame Streams control frame.");
-
             uint length = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(4));
             if (length < 4 || length > FrameCodec.MaxControlLength)
                 throw new InvalidDataException("Invalid Frame Streams control length.");
-
             byte[] payload = new byte[(int)length];
             await StreamDeadline.ReadExactlyAsync(_stream, payload, _operationTimeout, cancellationToken)
                 .ConfigureAwait(false);
@@ -183,47 +229,52 @@ public sealed class DnstapWriter : IAsyncDisposable
         }
     }
 
-    private async Task WaitForCompletionGateAsync(CancellationToken cancellationToken)
+    private async Task AcquireAsync(CancellationToken cancellationToken)
     {
-        if (!await _completionGate.WaitAsync(_mode == DnstapStreamMode.Duplex
-                ? _operationTimeout : Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false))
-            throw new TimeoutException("Timed out waiting for writer completion.");
+        if (_mode == DnstapStreamMode.Duplex)
+        {
+            if (!await _gate.WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false))
+                throw new TimeoutException("Timed out waiting for writer completion.");
+        }
+        else
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private void ThrowIfDisposed()
     {
-        if (Volatile.Read(ref _disposed) != 0)
+        if (Volatile.Read(ref _disposeRequested) != 0)
             throw new ObjectDisposedException(nameof(DnstapWriter));
     }
 
-    /// <summary>Completes healthy duplex sessions and always releases an owned transport, even on failure.</summary>
+    /// <summary>
+    /// Completes a healthy session, then releases an owned stream even after failure.
+    /// A concurrent operation may still be unwinding when lock acquisition times out.
+    /// Repeated concurrent disposal calls may return before the first finishes.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
             return;
 
         bool acquired = false;
         try
         {
-            await WaitForCompletionGateAsync(CancellationToken.None).ConfigureAwait(false);
+            await AcquireAsync(CancellationToken.None).ConfigureAwait(false);
             acquired = true;
-            if (_mode == DnstapStreamMode.Duplex && _started && !_finished && !_faulted && !_frames.IsFaulted)
+            if (_state == SessionState.Started)
                 await CompleteStartedAsync(CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
-            try
+            if (acquired)
             {
-                if (acquired)
-                    await _frames.DisposeAsync().ConfigureAwait(false);
+                _state = SessionState.Disposed;
+                _gate.Release();
             }
-            finally
-            {
-                if (acquired)
-                    _completionGate.Release();
-                if (!_leaveOpen)
-                    await _stream.DisposeAsync().ConfigureAwait(false);
-            }
+            if (!_leaveOpen)
+                await _stream.DisposeAsync().ConfigureAwait(false);
         }
     }
 }
