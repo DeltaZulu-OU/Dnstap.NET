@@ -171,26 +171,29 @@ public sealed class DuplexWriterTests
     [TestMethod]
     public async Task DuplexHandshakeIsBoundedWhenPeerNeverResponds()
     {
+        var clock = new FakeTimeProvider();
         await using var stream = new ScriptedDuplexStream([], stallOnRead: true);
-        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
-            operationTimeout: TimeSpan.FromMilliseconds(100));
-        await Assert.ThrowsExactlyAsync<TimeoutException>(
-            () => writer.StartAsync().WaitAsync(TimeSpan.FromSeconds(3)));
-        await writer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        var writer = NewTimedWriter(stream, clock);
+        Task starting = writer.StartAsync();
+        await stream.ReadBlocked.WaitAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsExactlyAsync<TimeoutException>(() => starting);
+        await writer.DisposeAsync();
     }
 
     [TestMethod]
     public async Task StalledDuplexPayloadWriteCannotBlockDisposalForever()
     {
+        var clock = new FakeTimeProvider();
         await using var stream = new ScriptedDuplexStream(
-            Convert.FromHexString("000000000000000400000001"),
-            stallWriteOn: 4);
-        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
-            operationTimeout: TimeSpan.FromMilliseconds(100));
+            Convert.FromHexString("000000000000000400000001"), stallWriteOn: 4);
+        var writer = NewTimedWriter(stream, clock);
         await writer.StartAsync();
-        await Assert.ThrowsExactlyAsync<TimeoutException>(
-            () => writer.WriteAsync(Message()).WaitAsync(TimeSpan.FromSeconds(3)));
-        await writer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        Task writing = writer.WriteAsync(Message());
+        await stream.WriteBlocked.WaitAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsExactlyAsync<TimeoutException>(() => writing);
+        await writer.DisposeAsync();
         Assert.AreEqual(4, stream.WriteCalls);
     }
 
@@ -198,30 +201,30 @@ public sealed class DuplexWriterTests
     [TestMethod]
     public async Task StalledStopWriteTimesOutWithoutDependingOnCallerCancellation()
     {
+        var clock = new FakeTimeProvider();
         await using var stream = new ScriptedDuplexStream(
             Convert.FromHexString("000000000000000400000001"), stallWriteOn: 3);
-        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
-            operationTimeout: TimeSpan.FromMilliseconds(100));
+        var writer = NewTimedWriter(stream, clock);
         await writer.StartAsync();
         Task completing = writer.CompleteAsync();
-        await Assert.ThrowsExactlyAsync<TimeoutException>(
-            () => completing.WaitAsync(TimeSpan.FromSeconds(3)));
-        Assert.IsTrue(completing.IsCompleted, "The writer must enforce the timeout itself.");
-        await writer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        await stream.WriteBlocked.WaitAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsExactlyAsync<TimeoutException>(() => completing);
+        await writer.DisposeAsync();
     }
 
     [TestMethod]
     public async Task StalledStopCannotHangImplicitDuplexDisposal()
     {
+        var clock = new FakeTimeProvider();
         await using var stream = new ScriptedDuplexStream(
             Convert.FromHexString("000000000000000400000001"), stallWriteOn: 3);
-        var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
-            operationTimeout: TimeSpan.FromMilliseconds(100));
+        var writer = NewTimedWriter(stream, clock);
         await writer.StartAsync();
         Task disposing = writer.DisposeAsync().AsTask();
-        await Assert.ThrowsExactlyAsync<TimeoutException>(
-            () => disposing.WaitAsync(TimeSpan.FromSeconds(3)));
-        Assert.IsTrue(disposing.IsCompleted, "Dispose must enforce its own STOP timeout.");
+        await stream.WriteBlocked.WaitAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsExactlyAsync<TimeoutException>(() => disposing);
     }
 
 
@@ -319,6 +322,10 @@ public sealed class DuplexWriterTests
         Assert.AreEqual(1, stream.DisposeCalls);
     }
 
+    private static DnstapWriter NewTimedWriter(Stream stream, TimeProvider clock) =>
+        new(stream, DnstapStreamMode.Duplex, leaveOpen: true,
+            maxDataLength: 98_304, operationTimeout: TimeSpan.FromSeconds(10), timeProvider: clock);
+
     private static global::Dnstap.Dnstap Message() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
@@ -391,6 +398,10 @@ public sealed class DuplexWriterTests
         internal int ReadCalls { get; private set; }
         internal int WriteCalls { get; private set; }
         private readonly TaskCompletionSource<int> _stalledRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _readBlocked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _writeBlocked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task ReadBlocked => _readBlocked.Task;
+        internal Task WriteBlocked => _writeBlocked.Task;
         private readonly TaskCompletionSource _stalledWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _writeCancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal async Task<bool> AwaitStalledWriteCancellation(TimeSpan timeout)
@@ -416,7 +427,11 @@ public sealed class DuplexWriterTests
         public override ValueTask<int> ReadAsync(Memory<byte> destination, CancellationToken cancellationToken = default)
         {
             ReadCalls++;
-            if (stallOnRead) return new ValueTask<int>(_stalledRead.Task);
+            if (stallOnRead)
+            {
+                _readBlocked.TrySetResult();
+                return new ValueTask<int>(_stalledRead.Task);
+            }
             return _reads.ReadAsync(destination[..Math.Min(destination.Length, 2)], cancellationToken);
         }
 
@@ -424,8 +439,11 @@ public sealed class DuplexWriterTests
         {
             WriteCalls++;
             if (WriteCalls == stallWriteOn)
+            {
+                _writeBlocked.TrySetResult();
                 return new ValueTask(observeWriteCancellation
                     ? StallAndObserveCancellation(cancellationToken) : _stalledWrite.Task);
+            }
             return _writes.WriteAsync(source, cancellationToken);
         }
 
