@@ -396,7 +396,7 @@ public sealed class WriterBoundaryAndLifecycleTests
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer,
             CancellationToken cancellationToken = default)
         {
-            if (buffer.Length == 4)
+            if (buffer.Length >= 4 && BinaryPrimitives.ReadUInt32BigEndian(buffer.Span) != 0)
             {
                 _dataWriteEntered.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);

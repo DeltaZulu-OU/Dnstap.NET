@@ -138,7 +138,7 @@ internal static class FileFrameSession
                             : 8;
                 }
 
-                int maximum = Math.Max(FrameCodec.MaxControlLength + 8, maxDataLength + 4);
+                int maximum = Math.Max(512 + 8, maxDataLength + 4);
                 if (needed > maximum)
                     throw new InvalidDataException("Frame cannot fit within the configured maximum.");
                 if (needed > buffer.Length)

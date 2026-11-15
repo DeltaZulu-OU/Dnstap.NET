@@ -10,7 +10,7 @@ public enum DnstapStreamMode { File, Duplex }
 /// <summary>Writes dnstap Frame Streams records to a caller-provided stream.</summary>
 public sealed class DnstapWriter : IAsyncDisposable
 {
-    private enum SessionState { Created, Handshaking, Started, Completing, Completed, Faulted, Disposed }
+    private enum SessionState { Created, Started, Completed, Faulted }
 
     private readonly Stream _stream;
     private readonly DnstapStreamMode _mode;
@@ -20,7 +20,6 @@ public sealed class DnstapWriter : IAsyncDisposable
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ArrayBufferWriter<byte> _controlBuffer = new();
-    private readonly byte[] _dataHeader = new byte[4];
     private SessionState _state;
     private int _startAttempted;
     private int _disposeRequested;
@@ -81,7 +80,6 @@ public sealed class DnstapWriter : IAsyncDisposable
         try
         {
             ThrowIfDisposed();
-            _state = SessionState.Handshaking;
             try
             {
                 if (_mode == DnstapStreamMode.Duplex)
@@ -128,10 +126,14 @@ public sealed class DnstapWriter : IAsyncDisposable
         int size = message.CalculateSize();
         if (size < 1 || size > _maxDataLength)
             throw new ArgumentOutOfRangeException(nameof(message), "dnstap message exceeds the configured frame size.");
-        return WriteRecordAsync(message.ToByteArray(), cancellationToken);
+        // One owned frame buffer keeps header and payload stable even if a stream ignores cancellation.
+        byte[] frame = new byte[checked(size + 4)];
+        BinaryPrimitives.WriteUInt32BigEndian(frame, (uint)size);
+        message.WriteTo(frame.AsSpan(4));
+        return WriteRecordAsync(frame, cancellationToken);
     }
 
-    private async Task WriteRecordAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    private async Task WriteRecordAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
     {
         await AcquireAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -139,12 +141,10 @@ public sealed class DnstapWriter : IAsyncDisposable
             ThrowIfDisposed();
             if (_state != SessionState.Started)
                 throw new InvalidOperationException("Writer is not started, is completed, or is faulted.");
-            BinaryPrimitives.WriteUInt32BigEndian(_dataHeader, (uint)payload.Length);
             try
             {
-                await StreamDeadline.WriteAsync(_stream, _dataHeader, WriteTimeout, cancellationToken, timeProvider: _timeProvider)
-                    .ConfigureAwait(false);
-                await StreamDeadline.WriteAsync(_stream, payload, WriteTimeout, cancellationToken, timeProvider: _timeProvider)
+                // A single deadline bounds the entire frame, not its header and payload separately.
+                await StreamDeadline.WriteAsync(_stream, frame, WriteTimeout, cancellationToken, "Frame Streams data frame write", _timeProvider)
                     .ConfigureAwait(false);
             }
             catch
@@ -181,7 +181,6 @@ public sealed class DnstapWriter : IAsyncDisposable
 
     private async Task CompleteStartedAsync(CancellationToken cancellationToken)
     {
-        _state = SessionState.Completing;
         try
         {
             await WriteControlAsync(ControlTypes.Stop, cancellationToken).ConfigureAwait(false);
@@ -245,10 +244,12 @@ public sealed class DnstapWriter : IAsyncDisposable
         }
 
         using var timeout = new CancellationTokenSource(_operationTimeout, _timeProvider);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        using var linked = cancellationToken.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token)
+            : null;
         try
         {
-            await _gate.WaitAsync(linked.Token).ConfigureAwait(false);
+            await _gate.WaitAsync(linked?.Token ?? timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -266,6 +267,7 @@ public sealed class DnstapWriter : IAsyncDisposable
     /// Completes a healthy session, then releases an owned stream even after failure.
     /// A concurrent operation may still be unwinding when lock acquisition times out.
     /// Repeated concurrent disposal calls may return before the first finishes.
+    /// File mode has no I/O or lock deadline; a stalled stream can prevent disposal from finishing.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -284,7 +286,6 @@ public sealed class DnstapWriter : IAsyncDisposable
         {
             if (acquired)
             {
-                _state = SessionState.Disposed;
                 _gate.Release();
             }
             if (!_leaveOpen)

@@ -49,7 +49,7 @@ internal static class TestFrameCodec
             return OperationStatus.NeedMoreData;
         input.Slice(4, 4).CopyTo(header);
         uint controlLength = BinaryPrimitives.ReadUInt32BigEndian(header);
-        if (controlLength < 4 || controlLength > FrameCodec.MaxControlLength)
+        if (controlLength < 4 || controlLength > 512)
             return OperationStatus.InvalidData;
         if (input.Length - 8 < controlLength)
             return OperationStatus.NeedMoreData;

@@ -186,7 +186,7 @@ public sealed class DuplexWriterTests
     {
         var clock = new FakeTimeProvider();
         await using var stream = new ScriptedDuplexStream(
-            Convert.FromHexString("000000000000000400000001"), stallWriteOn: 4);
+            Convert.FromHexString("000000000000000400000001"), stallWriteOn: 3);
         var writer = NewTimedWriter(stream, clock);
         await writer.StartAsync();
         Task writing = writer.WriteAsync(Message());
@@ -194,7 +194,7 @@ public sealed class DuplexWriterTests
         clock.Advance(TimeSpan.FromSeconds(10));
         await Assert.ThrowsExactlyAsync<TimeoutException>(() => writing);
         await writer.DisposeAsync();
-        Assert.AreEqual(4, stream.WriteCalls);
+        Assert.AreEqual(3, stream.WriteCalls);
     }
 
 
