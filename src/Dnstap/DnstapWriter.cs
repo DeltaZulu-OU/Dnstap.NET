@@ -43,8 +43,9 @@ public sealed class DnstapWriter : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(mode));
         if (!stream.CanWrite || (mode == DnstapStreamMode.Duplex && !stream.CanRead))
             throw new ArgumentException("The stream must be writable, and duplex streams must also be readable.", nameof(stream));
-        if (maxDataLength <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maxDataLength));
+        if (maxDataLength <= 0 || maxDataLength > Array.MaxLength - sizeof(uint))
+            throw new ArgumentOutOfRangeException(nameof(maxDataLength),
+                "Maximum DATA payload must leave room for its four-byte frame header.");
 
         _operationTimeout = operationTimeout ?? TimeSpan.FromSeconds(30);
         if (_operationTimeout <= TimeSpan.Zero || _operationTimeout.TotalMilliseconds > int.MaxValue)

@@ -6,8 +6,7 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 using Google.Protobuf;
 
-BenchmarkRunner.Run<FileWriterBenchmarks>();
-BenchmarkRunner.Run<LoopbackTcpWriterBenchmarks>();
+BenchmarkSwitcher.FromAssembly(typeof(FileWriterBenchmarks).Assembly).Run(args);
 
 public abstract class WriterBenchmarkBase
 {
@@ -74,6 +73,7 @@ public class LoopbackTcpWriterBenchmarks : WriterBenchmarkBase
             await stream.WriteAsync(Convert.FromHexString("000000000000000400000001")); // ACCEPT
             await ReadControlAsync(stream); // START
             var header = new byte[4];
+            byte[] recordBuffer = new byte[Message.CalculateSize()];
             while (true)
             {
                 await stream.ReadExactlyAsync(header);
@@ -92,8 +92,9 @@ public class LoopbackTcpWriterBenchmarks : WriterBenchmarkBase
                 }
                 else
                 {
-                    byte[] record = new byte[checked((int)size)];
-                    await stream.ReadExactlyAsync(record);
+                    if (size > (uint)recordBuffer.Length)
+                        throw new InvalidDataException("DATA frame exceeded benchmark receiver buffer.");
+                    await stream.ReadExactlyAsync(recordBuffer.AsMemory(0, checked((int)size)));
                 }
             }
         });

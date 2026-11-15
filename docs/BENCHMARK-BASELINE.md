@@ -2,7 +2,7 @@
 
 Source: GitHub Actions [run 43717103527](https://github.com/zbalkan/Dnstap.NET/actions/runs/43717103527), workflow artifact `writer-benchmark-evidence`. Commit: `7a15a273899cb5e3d9be50906d8f7c204bfcdbca`. BenchmarkDotNet 0.15.8, Ubuntu 26.04.1, .NET 10.0.15, Xeon 6975P (2 physical / 4 logical cores).
 
-Short benchmark configuration (`--job short --warmupCount 1 --iterationCount 3 --launchCount 1`); mean times and managed allocation per operation are:
+The original workflow **requested** `--job short --warmupCount 1 --iterationCount 3 --launchCount 1`, but the benchmark entry point did not forward its command-line arguments. These measurements therefore used BenchmarkDotNet defaults, not the documented short configuration. Moreover, TCP allocations include per-frame allocations made by the receiver. The figures below are retained only as **superseded historical observations**; do not use them as a valid controlled baseline:
 
 | DNS payload bytes | File mean (ns) | File allocation (B/op) | Loopback TCP mean (ns) | TCP allocation (B/op) |
 |---:|---:|---:|---:|---:|
@@ -12,7 +12,7 @@ Short benchmark configuration (`--job short --warmupCount 1 --iterationCount 3 -
 
 ## Interpretation and next decision
 
-These are initial single-run measurements, not a before/after comparison, a workload capacity figure, or evidence of a regression. File mode writes to `Stream.Null`, so it measures serialization and writer overhead rather than disk throughput. The TCP case uses an in-process loopback peer and includes network/reader overhead and thread scheduling. Allocations scale with payload size because the writer owns a serialized frame buffer. The 8 KiB file-case standard deviation (59.25 ns) is non-negligible relative to its mean, so do not overinterpret small differences.
+These are superseded single-run observations, not a before/after comparison, a workload capacity figure, or evidence of a regression. Re-run benchmarks after the command-line forwarding and receiver-buffer fixes, and replace this section with a new evidence-linked baseline. File mode writes to `Stream.Null`, so it measures serialization and writer overhead rather than disk throughput. The TCP case uses an in-process loopback peer and includes network/reader overhead and thread scheduling. Allocations scale with payload size because the writer owns a serialized frame buffer. The 8 KiB file-case standard deviation (59.25 ns) is non-negligible relative to its mean, so do not overinterpret small differences.
 
 **Decision:** no further production optimization is warranted from these data alone. The single-buffer, single-deadline implementation remains. In particular, do not pool outgoing frames: a noncooperative asynchronous operation may retain the memory after timeout. To propose pooling or batching, first quantify a production target (messages/s, payload distribution, p95 latency, memory budget, behavior under slow receiver) and measure before/after with the same runner, pinned runtime and equivalent workload.
 

@@ -19,14 +19,18 @@ done
 [[ "$ready" -eq 1 ]] || { cat "$root/collector.log"; exit 1; }
 
 dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16054 --count 3 --no-complete
+# Exercise explicit completion against the same receiver as a separate TCP session.
+dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16054 --count 3
 dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- file --output "$root/tap-watch/capture.tmp" --count 3
 mv "$root/tap-watch/capture.tmp" "$root/tap-watch/capture.fstrm"
 
 check_records() {
   local output="$1"
-  [[ -s "$output" ]] && jq -s -e '
-    length == 3 and
-    (map(.dns.id) | sort) == [0, 1, 2] and
+  local expected="$2"
+  [[ -s "$output" ]] && jq -s -e --argjson expected "$expected" '
+    length == $expected and
+    (if $expected == 6 then (map(.dns.id) | sort) == [0, 0, 1, 1, 2, 2]
+     else (map(.dns.id) | sort) == [0, 1, 2] end) and
     all(.[]; .dnstap.operation == "CLIENT_QUERY" and
       .dnstap.identity == "tapper" and
       .network."query-ip" == "192.0.2.10" and
@@ -37,7 +41,7 @@ check_records() {
 
 success=0
 for i in {1..120}; do
-  if check_records "$root/tcp.jsonl" && check_records "$root/file.jsonl"; then
+  if check_records "$root/tcp.jsonl" 6 && check_records "$root/file.jsonl" 3; then
     success=1
     break
   fi
@@ -53,7 +57,7 @@ fi
 
 # Recheck after at least two 1-second worker monitoring ticks and a logger flush.
 sleep 3
-if ! check_records "$root/tcp.jsonl" || ! check_records "$root/file.jsonl"; then
+if ! check_records "$root/tcp.jsonl" 6 || ! check_records "$root/file.jsonl" 3; then
   echo "DNS-collector record count or identity changed after the flush interval" >&2
   exit 1
 fi
@@ -62,4 +66,4 @@ if grep -Eiq 'framestream reader error|unable to decode|worker.*busy|buffer is f
   tail -100 "$root/collector.log"
   exit 1
 fi
-echo "DNS-collector accepted all 3 exact records in file and TCP modes"
+echo "DNS-collector accepted 3 exact file records and 6 TCP records (implicit and explicit completion)"

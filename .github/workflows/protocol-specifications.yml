@@ -38,6 +38,11 @@ jobs:
         run: dotnet restore Tapper/Tapper.csproj && dotnet build Tapper/Tapper.csproj -c Release --no-restore
       - name: Compile performance harness (do not benchmark shared runner)
         run: dotnet restore benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj && dotnet build benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -c Release --no-restore
+      - name: Verify benchmark CLI argument forwarding
+        run: |
+          dotnet run -c Release --no-build --project benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -- --list flat > benchmark-list.txt
+          grep -q 'FileWriterBenchmarks.WriteFrame' benchmark-list.txt
+          grep -q 'LoopbackTcpWriterBenchmarks.WriteFrame' benchmark-list.txt
       - name: Exercise public library API through Tapper
         run: dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- file --output "${{ runner.temp }}/tapper.fstrm" --count 3
       - name: Upload Tapper file

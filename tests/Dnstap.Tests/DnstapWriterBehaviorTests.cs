@@ -75,6 +75,25 @@ public sealed class DnstapWriterBehaviorTests
     }
 
     [TestMethod]
+    public void FrameLengthLimitRejectsSizesThatCannotFitManagedFrameBuffer()
+    {
+        using var stream = new MemoryStream();
+        int maximum = Array.MaxLength - sizeof(uint);
+
+        // Boundary validation must not itself allocate a large frame.
+        var file = new DnstapWriter(stream, maxDataLength: maximum);
+        var duplex = new DnstapWriter(stream, DnstapStreamMode.Duplex, maxDataLength: maximum);
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => new DnstapWriter(stream, maxDataLength: maximum + 1));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => new DnstapWriter(stream, DnstapStreamMode.Duplex, maxDataLength: int.MaxValue));
+
+        file.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        duplex.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    [TestMethod]
     public async Task PreCancelledStartDoesNotPreventRetry()
     {
         await using var stream = new MemoryStream();
