@@ -225,7 +225,7 @@ public sealed class FileSessionSpecificationTests
     [TestMethod]
     public async Task Fs018_LargeThenManySmallFramesDoNotRetainOversizedReadBuffer()
     {
-        const int largeLength = FrameCodec.DefaultMaxReceiveLength;
+        const int largeLength = TestFrameCodec.DefaultMaxReceiveLength;
         const int smallCount = 10_000;
         byte[] largeFrame = new byte[4 + largeLength];
         BinaryPrimitives.WriteUInt32BigEndian(largeFrame, largeLength);

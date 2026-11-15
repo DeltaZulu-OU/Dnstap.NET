@@ -116,18 +116,18 @@ public sealed class FrameWireSpecificationTests
     [TestMethod]
     public void Fs004_DataAtConfiguredOneMiBReceiveLimitIsAccepted()
     {
-        byte[] bytes = new byte[4 + FrameCodec.DefaultMaxReceiveLength];
-        BinaryPrimitives.WriteUInt32BigEndian(bytes, FrameCodec.DefaultMaxReceiveLength);
+        byte[] bytes = new byte[4 + TestFrameCodec.DefaultMaxReceiveLength];
+        BinaryPrimitives.WriteUInt32BigEndian(bytes, TestFrameCodec.DefaultMaxReceiveLength);
         Assert.AreEqual(OperationStatus.Done, WireFixture.Parse(bytes, out FrameSlice frame, out long consumed));
         Assert.AreEqual((long)bytes.Length, consumed);
-        Assert.AreEqual(FrameCodec.DefaultMaxReceiveLength, frame.Payload.Length);
+        Assert.AreEqual(TestFrameCodec.DefaultMaxReceiveLength, frame.Payload.Length);
     }
 
     [TestMethod]
     public void Fs004_OneByteOverReceiveLimitIsRejectedBeforeReadingPayload()
     {
         byte[] prefix = new byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(prefix, FrameCodec.DefaultMaxReceiveLength + 1);
+        BinaryPrimitives.WriteUInt32BigEndian(prefix, TestFrameCodec.DefaultMaxReceiveLength + 1);
         Assert.AreEqual(OperationStatus.InvalidData, WireFixture.Parse(prefix, out _, out _));
     }
 
@@ -147,7 +147,7 @@ public sealed class FrameWireSpecificationTests
         var first = new TestSegment(Convert.FromHexString("0000"));
         var second = first.Append(Convert.FromHexString("0003616263"));
         var sequence = new ReadOnlySequence<byte>(first, 0, second, second.Memory.Length);
-        Assert.AreEqual(OperationStatus.Done, FrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
+        Assert.AreEqual(OperationStatus.Done, TestFrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
         Assert.AreEqual(7L, consumed);
         CollectionAssert.AreEqual("abc"u8.ToArray(), frame.Payload.ToArray());
     }
@@ -274,8 +274,8 @@ internal static class WireFixture
     internal static byte[] Data => Convert.FromHexString("00000003616263");
 
     internal static OperationStatus Parse(byte[] wire, out FrameSlice frame, out long consumed,
-        int maxDataLength = FrameCodec.DefaultMaxReceiveLength) =>
-        FrameCodec.TryRead(new ReadOnlySequence<byte>(wire), out frame, out consumed, maxDataLength);
+        int maxDataLength = TestFrameCodec.DefaultMaxReceiveLength) =>
+        TestFrameCodec.TryRead(new ReadOnlySequence<byte>(wire), out frame, out consumed, maxDataLength);
 
     // Test fixture construction is independent of the implementation's control encoder.
     internal static byte[] Control(uint type, params byte[][] types)

@@ -42,7 +42,7 @@ public sealed class DuplexWriterTests
         {
             var sequence = new ReadOnlySequence<byte>(wire.AsMemory(position));
             Assert.AreEqual(OperationStatus.Done,
-                FrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
+                TestFrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
             position += checked((int)consumed);
             if (frame.Kind == FrameKind.Control)
             {
@@ -71,7 +71,7 @@ public sealed class DuplexWriterTests
             await Assert.ThrowsExactlyAsync<InvalidDataException>(() => writer.StartAsync());
 
         var sequence = new ReadOnlySequence<byte>(duplex.Written);
-        Assert.AreEqual(OperationStatus.Done, FrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
+        Assert.AreEqual(OperationStatus.Done, TestFrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed));
         Assert.AreEqual(OperationStatus.Done, ControlCodec.TryDecode(frame.Payload, out ControlFrame? control));
         Assert.AreEqual(ControlTypes.Ready, control!.Type);
         Assert.AreEqual((long)duplex.Written.Length, consumed, "START/STOP must not follow a failed negotiation.");

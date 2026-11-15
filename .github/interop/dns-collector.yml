@@ -1,4 +1,6 @@
 global:
+  worker:
+    interval-monitor: 1
   trace:
     verbose: true
 

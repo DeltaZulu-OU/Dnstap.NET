@@ -12,7 +12,7 @@ public sealed class ReaderBufferingTests
     {
         const int smallCount = 10_000;
         byte[] wire = CreateLargeAndSmallFrames(smallCount);
-        int boundary = WireFixture.Start.Length + 4 + FrameCodec.DefaultMaxReceiveLength + 2;
+        int boundary = WireFixture.Start.Length + 4 + TestFrameCodec.DefaultMaxReceiveLength + 2;
 
         // Delivers the first two header bytes of the next frame with the large
         // frame. Requests after this boundary must use a normal-sized buffer.
@@ -22,7 +22,7 @@ public sealed class ReaderBufferingTests
         {
             messages++;
             if (messages == 1)
-                Assert.AreEqual(FrameCodec.DefaultMaxReceiveLength, payload.Length);
+                Assert.AreEqual(TestFrameCodec.DefaultMaxReceiveLength, payload.Length);
             else
                 Assert.AreEqual(1, payload.Length);
         }
@@ -39,7 +39,7 @@ public sealed class ReaderBufferingTests
         int messages = 0;
         await foreach (ReadOnlyMemory<byte> payload in FileFrameSession.ReadAsync(stream))
         {
-            Assert.AreEqual(FrameCodec.DefaultMaxReceiveLength, payload.Length);
+            Assert.AreEqual(TestFrameCodec.DefaultMaxReceiveLength, payload.Length);
             messages++;
         }
 
@@ -56,7 +56,7 @@ public sealed class ReaderBufferingTests
     {
         using var stream = new MemoryStream();
         stream.Write(WireFixture.Start);
-        int large = FrameCodec.DefaultMaxReceiveLength;
+        int large = TestFrameCodec.DefaultMaxReceiveLength;
         Span<byte> header = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32BigEndian(header, (uint)large);
         stream.Write(header);

@@ -50,6 +50,33 @@ A pre-cancelled `StartAsync` attempt may be retried without sending bytes. Cance
 
 Duplex reads, writes, flushes and lock waits have a configurable **30-second default timeout per operation**. Timeouts cancel pending underlying I/O when the stream honors cancellation, and stop awaiting I/O even if it does not. The latter does **not** guarantee the underlying operation has stopped; the caller owns that transport risk. File operations use the caller's cancellation token and do not have this duplex timeout.
 
+## Requirement IDs
+
+Test names retain the original IDs. `Sender` describes shipped functionality; `oracle` denotes test-only decoding.
+
+| ID | Requirement | Scope |
+|---|---|---|
+| FS-001 | Big-endian, unsigned frame and field lengths | Codec / oracle |
+| FS-002 | Control payload 4–512 bytes | Sender / oracle |
+| FS-003 | CONTENT_TYPE value at most 256 bytes | Sender / oracle |
+| FS-004 | Incoming DATA size checked against configured limit | Oracle |
+| FS-005 | Outgoing DATA size checked before writing | Sender |
+| FS-006 | Reject truncated declared lengths | Oracle |
+| FS-007 | Enforce control field cardinality | Sender / oracle |
+| FS-008 | Reject unknown control field IDs | Decoder |
+| FS-009 | Preserve unknown control types for post-START policy | Oracle |
+| FS-010 | Validate START content type when present | Oracle |
+| FS-011 | START → DATA* → STOP, with strict EOF/trailing-byte checks | Sender / oracle |
+| FS-012 | Duplex handshake and FINISH validation on completion | Sender |
+| FS-013 | Handle fragmented frames without losing bytes | Sender / oracle |
+| FS-014 | No duplicate START/STOP; idempotent resource cleanup | Sender |
+| FS-015 | Bound duplex handshake, writes, flushes and FINISH reads | Sender |
+| FS-016 | Honor caller cancellation and clean up incomplete operations | Sender / oracle |
+| FS-017 | Borrow test frame views without copying | Oracle |
+| FS-018 | Avoid repeated buffer compaction when reading | Oracle |
+| FS-019 | Write caller-provided frame payload without copying it again | Sender |
+| FS-020 | Size read buffers from validated lengths | Oracle |
+
 ## Verification
 
 Unit tests cover wire fixtures, protocol states, boundaries and failure paths. File-reader and strict EOF/trailing-byte tests verify a **test-only oracle**, not a shipped receiving API; libfstrm's file reader may accept truncated captures that the oracle rejects. CI uses **Tapper** to exercise both file and TCP output against pinned `golang-dnstap` and DNS-collector v3.3.7. DNS-collector is permissive in some error cases; passing its ingestion test establishes compatibility, not complete protocol conformance. Keep the independent Go checks and unit specifications.

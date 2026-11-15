@@ -51,8 +51,8 @@ if [[ "$success" -ne 1 ]]; then
   exit 1
 fi
 
-# Recheck after the logfile flush interval so late duplicates cannot satisfy an early poll.
-sleep 2
+# Recheck after at least two 1-second worker monitoring ticks and a logger flush.
+sleep 3
 if ! check_records "$root/tcp.jsonl" || ! check_records "$root/file.jsonl"; then
   echo "DNS-collector record count or identity changed after the flush interval" >&2
   exit 1

@@ -10,7 +10,7 @@ internal static class FileFrameSession
     internal static async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAsync(
         Stream stream,
         [EnumeratorCancellation] CancellationToken cancellationToken = default,
-        int maxDataLength = FrameCodec.DefaultMaxReceiveLength)
+        int maxDataLength = TestFrameCodec.DefaultMaxReceiveLength)
     {
         ArgumentNullException.ThrowIfNull(stream);
         if (maxDataLength < 1 || maxDataLength > int.MaxValue - 8)
@@ -26,7 +26,7 @@ internal static class FileFrameSession
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var sequence = new ReadOnlySequence<byte>(buffer.AsMemory(start, buffered - start));
-                OperationStatus result = FrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed, maxDataLength);
+                OperationStatus result = TestFrameCodec.TryRead(sequence, out FrameSlice frame, out long consumed, maxDataLength);
                 if (result == OperationStatus.InvalidData)
                     throw new InvalidDataException("Malformed Frame Streams frame.");
 
