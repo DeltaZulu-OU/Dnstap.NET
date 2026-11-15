@@ -318,7 +318,7 @@ public sealed class WriterBoundaryAndLifecycleTests
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             // Block the ACCEPT header, or the FINISH header after ACCEPT was consumed.
-            if (!pauseOnFinish || BytesRead == incoming.Length)
+            if (!pauseOnFinish || BytesRead == 12)
             {
                 _paused.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
