@@ -62,6 +62,25 @@ public sealed class VirtualTimeWriterTests
         await writer.DisposeAsync();
     }
 
+    [TestMethod]
+    public async Task CallerCancellationDoesNotBecomeDeadlineTimeout()
+    {
+        var clock = new FakeTimeProvider();
+        await using var peer = new BlockingControlPeer([]);
+        var writer = NewWriter(peer, clock);
+        using var cancellation = new CancellationTokenSource();
+        Task starting = writer.StartAsync(cancellation.Token);
+        await peer.ReadStarted.WaitAsync(TimeSpan.FromSeconds(3));
+
+        cancellation.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => starting);
+        await peer.ReadCancellationObserved.WaitAsync(TimeSpan.FromSeconds(3));
+        // Advancing after cancellation must not resurrect a disposed deadline.
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await writer.DisposeAsync();
+    }
+
     private static DnstapWriter NewWriter(Stream stream, TimeProvider clock) =>
         new(stream, DnstapStreamMode.Duplex, leaveOpen: true,
             maxDataLength: 98_304, operationTimeout: TimeSpan.FromSeconds(10), timeProvider: clock);
