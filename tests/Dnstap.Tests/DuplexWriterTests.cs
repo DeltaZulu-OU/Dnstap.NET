@@ -266,19 +266,49 @@ public sealed class DuplexWriterTests
     [TestMethod]
     public async Task TimedOutDuplexWriteCancelsCooperativeUnderlyingOperation()
     {
-        await using var stream = new ScriptedDuplexStream(
-            WireFixture.Control(ControlTypes.Accept),
-            stallWriteOn: 3, observeWriteCancellation: true);
+        // Repetition exposes races between the stream's cancellation and the wait timeout.
+        for (int iteration = 0; iteration < 50; iteration++)
+        {
+            await using var stream = new ScriptedDuplexStream(
+                WireFixture.Control(ControlTypes.Accept),
+                stallWriteOn: 3, observeWriteCancellation: true);
+            var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
+                operationTimeout: TimeSpan.FromMilliseconds(25));
+            await writer.StartAsync();
+            await Assert.ThrowsExactlyAsync<TimeoutException>(() => writer.WriteAsync(Message()));
+            Assert.IsTrue(await stream.AwaitStalledWriteCancellation(TimeSpan.FromSeconds(1)),
+                $"I/O cancellation was not propagated in iteration {iteration}.");
+            await writer.DisposeAsync();
+            CollectionAssert.AreEqual(WireFixture.Concat(
+                Convert.FromHexString("000000000000002200000004000000010000001670726F746F6275663A646E737461702E446E73746170"),
+                WireFixture.Start), stream.Written, "A failed DATA write must not be followed by STOP.");
+        }
+    }
+
+
+    [TestMethod]
+    public async Task DisposeRacingCompletionReleasesOwnedStreamEvenWhenLockWaitTimesOut()
+    {
+        await using var stream = new ControlledShutdownStream();
         var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
-            operationTimeout: TimeSpan.FromMilliseconds(150));
+            leaveOpen: false, operationTimeout: TimeSpan.FromMilliseconds(400));
         await writer.StartAsync();
-        await Assert.ThrowsExactlyAsync<TimeoutException>(() => writer.WriteAsync(Message()));
-        Assert.IsTrue(await stream.AwaitStalledWriteCancellation(TimeSpan.FromSeconds(2)),
-            "The cancellation token supplied to the actual stream write must be cancelled.");
-        await writer.DisposeAsync();
-        CollectionAssert.AreEqual(WireFixture.Concat(
-            Convert.FromHexString("000000000000002200000004000000010000001670726F746F6275663A646E737461702E446E73746170"),
-            WireFixture.Start), stream.Written, "A failed DATA write must not be followed by STOP.");
+
+        Task completing = writer.CompleteAsync();
+        await stream.StopWriteStarted.WaitAsync(TimeSpan.FromSeconds(3));
+        Task disposing = writer.DisposeAsync().AsTask();
+        // STOP and FINISH are separate bounded operations; completion can hold the
+        // outer lock longer than disposal's single lock-wait timeout.
+        await Task.Delay(220);
+        stream.ReleaseStopWrite();
+
+        await Assert.ThrowsExactlyAsync<TimeoutException>(
+            () => disposing.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.AreEqual(1, stream.DisposeCalls, "Owned transport must be released even if the lock cannot be acquired.");
+        Assert.ThrowsExactly<ObjectDisposedException>(() => writer.WriteAsync(Message()));
+        await Assert.ThrowsAsync<Exception>(() => completing.WaitAsync(TimeSpan.FromSeconds(3)));
+        await writer.DisposeAsync(); // Disposal stays idempotent after a timeout.
+        Assert.AreEqual(1, stream.DisposeCalls);
     }
 
     private static global::Dnstap.Dnstap Message() => new()
@@ -290,6 +320,54 @@ public sealed class DuplexWriterTests
             QueryMessage = ByteString.CopyFrom(Convert.FromHexString("000101000001000000000000076578616D706C6503636F6D0000010001"))
         }
     };
+
+
+    // A deterministic peer that blocks a STOP write, then never replies with FINISH.
+    // This makes CompleteAsync hold the outer lock across two separate deadlines.
+    private sealed class ControlledShutdownStream : Stream
+    {
+        private readonly MemoryStream _responses = new(WireFixture.Control(ControlTypes.Accept));
+        private readonly TaskCompletionSource _stopStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<int> _stalledFinish = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _disposeCalls;
+
+        internal Task StopWriteStarted => _stopStarted.Task;
+        internal int DisposeCalls => Volatile.Read(ref _disposeCalls);
+        internal void ReleaseStopWrite() => _releaseStop.TrySetResult();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            _responses.Position == _responses.Length
+                ? new ValueTask<int>(_stalledFinish.Task)
+                : _responses.ReadAsync(buffer, cancellationToken);
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (buffer.Span.SequenceEqual(WireFixture.Stop))
+            {
+                _stopStarted.TrySetResult();
+                await _releaseStop.Task.WaitAsync(cancellationToken);
+            }
+        }
+
+        public override ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCalls);
+            return ValueTask.CompletedTask;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanWrite => true;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
 
     private sealed class ScriptedDuplexStream(byte[] responses, bool stallOnRead = false, int stallWriteOn = 0,
         bool observeWriteCancellation = false) : Stream

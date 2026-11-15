@@ -227,6 +227,25 @@ public sealed class DnstapWriterBehaviorTests
         await writer.CompleteAsync();
     }
 
+
+    [TestMethod]
+    public async Task CancellingFileWriteMidFrameFaultsWriterWithoutAppendingStop()
+    {
+        await using var stream = new YieldingWriteStream(blockFirstDataWrite: true);
+        var writer = new DnstapWriter(stream);
+        await writer.StartAsync();
+        using var cancellation = new CancellationTokenSource();
+        Task write = writer.WriteAsync(Sample(), cancellation.Token);
+        await stream.FirstDataWriteStarted.WaitAsync(TimeSpan.FromSeconds(3));
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => write);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => writer.CompleteAsync());
+        await writer.DisposeAsync();
+        byte[] bytes = stream.ToArray();
+        Assert.IsFalse(bytes.AsSpan().EndsWith(Convert.FromHexString("000000000000000400000003")),
+            "A cancelled, potentially partial frame must not be followed by STOP.");
+    }
+
     private static global::Dnstap.Dnstap Sample() => new()
     {
         Type = global::Dnstap.Dnstap.Types.Type.Message,
