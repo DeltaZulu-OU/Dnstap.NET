@@ -52,35 +52,45 @@ public sealed class DnstapWriter : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        // A pre-cancelled attempt never starts negotiation or changes writer state.
+        // A pre-cancelled or lock-waiting start must not modify protocol state.
         cancellationToken.ThrowIfCancellationRequested();
         ThrowIfDisposed();
-        if (Interlocked.Exchange(ref _startAttempted, 1) != 0)
-            throw new InvalidOperationException("Writer has already started.");
+        await WaitForCompletionGateAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_mode == DnstapStreamMode.Duplex)
+            // Disposing may have claimed the session while this call waited.
+            ThrowIfDisposed();
+            if (Interlocked.Exchange(ref _startAttempted, 1) != 0)
+                throw new InvalidOperationException("Writer has already started.");
+            try
             {
-                var frame = new ArrayBufferWriter<byte>();
-                FrameCodec.WriteControl(frame,
-                    new ControlFrame(ControlTypes.Ready,
-                        new ReadOnlyMemory<byte>[] { ControlTypes.DnstapContentType.ToArray() }));
-                await StreamDeadline.WriteAsync(_stream, frame.WrittenMemory, _operationTimeout,
-                    cancellationToken, "Frame Streams control write").ConfigureAwait(false);
-                ControlFrame accepted = await ReadControlAsync(cancellationToken).ConfigureAwait(false);
-                if (accepted.Type != ControlTypes.Accept ||
-                    (accepted.ContentTypes.Count != 0 &&
-                     !accepted.ContentTypes.Any(type => type.Span.SequenceEqual(ControlTypes.DnstapContentType))))
-                    throw new InvalidDataException("Collector did not accept the dnstap content type.");
-            }
+                if (_mode == DnstapStreamMode.Duplex)
+                {
+                    var frame = new ArrayBufferWriter<byte>();
+                    FrameCodec.WriteControl(frame,
+                        new ControlFrame(ControlTypes.Ready,
+                            new ReadOnlyMemory<byte>[] { ControlTypes.DnstapContentType.ToArray() }));
+                    await StreamDeadline.WriteAsync(_stream, frame.WrittenMemory, _operationTimeout,
+                        cancellationToken, "Frame Streams control write").ConfigureAwait(false);
+                    ControlFrame accepted = await ReadControlAsync(cancellationToken).ConfigureAwait(false);
+                    if (accepted.Type != ControlTypes.Accept ||
+                        (accepted.ContentTypes.Count != 0 &&
+                         !accepted.ContentTypes.Any(type => type.Span.SequenceEqual(ControlTypes.DnstapContentType))))
+                        throw new InvalidDataException("Collector did not accept the dnstap content type.");
+                }
 
-            await _frames.StartAsync(cancellationToken).ConfigureAwait(false);
-            _started = true;
+                await _frames.StartAsync(cancellationToken).ConfigureAwait(false);
+                _started = true;
+            }
+            catch
+            {
+                _faulted = true;
+                throw;
+            }
         }
-        catch
+        finally
         {
-            _faulted = true;
-            throw;
+            _completionGate.Release();
         }
     }
 
