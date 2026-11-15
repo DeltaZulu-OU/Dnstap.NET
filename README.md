@@ -52,3 +52,7 @@ Append `--no-complete` to exercise automatic graceful disposal instead of explic
 Run `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release` for unit tests. GitHub Actions additionally validates Tapper file and TCP output against the pinned Go dnstap reader and **DNS-collector v3.3.7**; collector acceptance alone is not proof of strict protocol compliance.
 
 The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c). [Frame Streams protocol and implementation rules](docs/FRAMESTREAMS-PROTOCOL.md).
+
+## License
+
+[GNU General Public License version 3 only (GPL-3.0-only)](LICENSE).
