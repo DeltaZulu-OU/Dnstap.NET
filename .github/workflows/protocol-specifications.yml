@@ -42,15 +42,35 @@ jobs:
       - name: Compile performance harness (do not benchmark shared runner)
         run: dotnet restore benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj --locked-mode && dotnet build benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -c Release --no-restore
       - name: Verify release version comparison
-        run: python3 -m unittest discover -s tests -p test_release_version.py -v
+        run: python3 -m unittest discover -s tests -p 'test_release_*.py' -v
+      - name: Verify package source mapping decisions
+        run: python3 -m unittest discover -s tests -p test_package_source_mapping.py -v
       - name: Smoke-test NuGet package creation
         run: |
-          dotnet pack src/Dnstap/Dnstap.csproj --configuration Release --no-build --no-restore --output "${{ runner.temp }}/package-smoke"
+          dotnet pack src/Dnstap/Dnstap.csproj --configuration Release --no-build --no-restore --output "${{ runner.temp }}/package-smoke" /p:RepositoryCommit="${{ github.sha }}"
           python3 -c 'import glob,os,subprocess; paths=glob.glob(os.path.join(os.environ["RUNNER_TEMP"], "package-smoke", "Dnstap.NET.*.nupkg")); assert len(paths)==1, "Expected exactly one package"; subprocess.run(["python3",".github/scripts/verify-nupkg.py",paths[0]],check=True)'
+      - name: Configure exclusive package source mapping for the local release candidate
+        run: python3 .github/scripts/configure-nuget-sources.py "${{ runner.temp }}/consumer.nuget.config" local "${{ runner.temp }}/package-smoke"
       - name: Restore external package consumer from local NuGet artifact
-        run: dotnet restore tests/PackageConsumer/PackageConsumer.csproj --source "${{ runner.temp }}/package-smoke" --source https://api.nuget.org/v3/index.json --packages "${{ runner.temp }}/package-consumer-cache"
+        run: dotnet restore tests/PackageConsumer/PackageConsumer.csproj --configfile "${{ runner.temp }}/consumer.nuget.config" --packages "${{ runner.temp }}/package-consumer-cache" --no-http-cache
       - name: Run external package consumer
         run: dotnet run --project tests/PackageConsumer/PackageConsumer.csproj --configuration Release --no-restore
+      - name: Record tested NuGet package digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${{ runner.temp }}/package-smoke"
+          sha256sum Dnstap.NET.*.nupkg > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Preserve tested NuGet release candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validated-nuget-package
+          path: |
+            ${{ runner.temp }}/package-smoke/*.nupkg
+            ${{ runner.temp }}/package-smoke/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify benchmark CLI argument forwarding
         run: |
           dotnet run -c Release --no-build --project benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -- --list flat > benchmark-list.txt
@@ -72,6 +92,25 @@ jobs:
           name: protocol-test-results
           path: TestResults/**/*.trx
           if-no-files-found: warn
+
+  release-artifact-smoke:
+    needs: protocol-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download tested release candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: validated-nuget-package
+          path: ${{ runner.temp }}/candidate
+      - name: Verify package and digest after artifact transfer
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd "${{ runner.temp }}/candidate" && sha256sum --check SHA256SUMS && test "$(wc -l < SHA256SUMS)" -eq 1)
+          python3 .github/scripts/verify-nupkg.py "${{ runner.temp }}/candidate/Dnstap.NET.$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("Directory.Build.props").getroot().find(".//Version").text)').nupkg"
 
   external-interop:
     runs-on: ubuntu-latest

@@ -6,4 +6,6 @@ The package provides `DnstapWriter`, typed `DnsLogEntry`/`DnstapRecordFactory`, 
 
 See [usage and lifecycle documentation](https://github.com/DeltaZulu-OU/Dnstap.NET#using-the-library) and the [protocol specification](https://github.com/DeltaZulu-OU/Dnstap.NET/blob/main/docs/FRAMESTREAMS-PROTOCOL.md).
 
+When using GitHub Packages alongside nuget.org, configure [NuGet Package Source Mapping](https://learn.microsoft.com/en-us/nuget/consume-packages/package-source-mapping) so the exact ID `Dnstap.NET` resolves only from `https://nuget.pkg.github.com/DeltaZulu-OU/index.json`, while other dependencies resolve from nuget.org. See [release and consumer configuration](https://github.com/DeltaZulu-OU/Dnstap.NET/blob/main/docs/RELEASING.md#package-source-mapping). Do not use the default unmapped combination of feeds for this package.
+
 Licensed under GPL-3.0-only. This is a prerelease API.

@@ -67,25 +67,46 @@ jobs:
           global-json-file: global.json
       - name: Recheck version on publishing runner
         run: python3 .github/scripts/check-release-version.py "$PACKAGE_VERSION"
-      - name: Restore library dependencies
-        run: dotnet restore src/Dnstap/Dnstap.csproj --locked-mode
-      - name: Build release library
-        run: dotnet build src/Dnstap/Dnstap.csproj --configuration Release --no-restore
-      - name: Pack library
-        run: dotnet pack src/Dnstap/Dnstap.csproj --configuration Release --no-build --no-restore --output "$PACKAGE_OUTPUT" /p:PackageVersion="$PACKAGE_VERSION"
-      - name: Verify package contents, license and dependency metadata
-        run: python3 .github/scripts/verify-nupkg.py "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg"
-      - name: Publish to GitHub Packages
+      - name: Download tested NuGet release candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: validated-nuget-package
+          path: ${{ env.PACKAGE_OUTPUT }}
+      - name: Verify tested package digest and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd "$PACKAGE_OUTPUT" && sha256sum --check SHA256SUMS && test "$(wc -l < SHA256SUMS)" -eq 1)
+          python3 .github/scripts/verify-nupkg.py "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg"
+      - name: Configure authenticated NuGet feed with package source mapping
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/github-packages-nuget.config"
+          python3 .github/scripts/configure-nuget-sources.py "$config" github "$GITHUB_NUGET_SOURCE"
+          dotnet nuget update source github --username "$GITHUB_ACTOR" --password "$GITHUB_TOKEN" --store-password-in-clear-text --configfile "$config"
+          echo "RELEASE_NUGET_CONFIG=$config" >> "$GITHUB_ENV"
+      - name: Push tested package to GitHub Packages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          config="$RUNNER_TEMP/github-packages-nuget.config"
-          dotnet new nugetconfig --output "$RUNNER_TEMP" --force
-          mv "$RUNNER_TEMP/nuget.config" "$config"
-          dotnet nuget add source --username "${{ github.actor }}" --password "$GITHUB_TOKEN" --store-password-in-clear-text --name github --configfile "$config" "$GITHUB_NUGET_SOURCE"
-          dotnet nuget push "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg" --api-key "$GITHUB_TOKEN" --configfile "$config" --source github --skip-duplicate
+          # A duplicate is acceptable only if the next step verifies identical bytes
+          # retrieved directly from the registry with no preexisting package cache.
+          dotnet nuget push "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg" --api-key "$GITHUB_TOKEN" --configfile "$RELEASE_NUGET_CONFIG" --source github --skip-duplicate
+      - name: Verify published package from a clean registry-backed restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="$RUNNER_TEMP/registry-verification-cache"
+          dotnet restore tests/PackageConsumer/PackageConsumer.csproj --configfile "$RELEASE_NUGET_CONFIG" --packages "$NUGET_PACKAGES" --no-http-cache
+          downloaded="$NUGET_PACKAGES/dnstap.net/$PACKAGE_VERSION/dnstap.net.$PACKAGE_VERSION.nupkg"
+          python3 .github/scripts/release-artifact.py compare "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg" "$downloaded"
+          dotnet run --project tests/PackageConsumer/PackageConsumer.csproj --configuration Release --no-restore
       - name: Create or verify release tag
         shell: bash
         run: |
@@ -98,14 +119,38 @@ jobs:
             git tag --annotate "$RELEASE_TAG" --message "Release $RELEASE_TAG"
             git push origin "$RELEASE_TAG"
           fi
-      - name: Create GitHub Release
+      - name: Reconcile and verify GitHub Release archive and manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
-            echo "GitHub Release $RELEASE_TAG already exists."
-          else
-            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes "$PACKAGE_OUTPUT/Dnstap.NET.$PACKAGE_VERSION.nupkg"
-          fi
+          package="Dnstap.NET.$PACKAGE_VERSION.nupkg"
+          candidate="$PACKAGE_OUTPUT/$package"
+          manifest="$PACKAGE_OUTPUT/SHA256SUMS"
+          release_json="$RUNNER_TEMP/release-metadata.json"
+          status="$(curl --fail-with-body --silent --show-error --output "$release_json" --write-out '%{http_code}' --header "Authorization: Bearer $GH_TOKEN" --header "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" || true)"
+          case "$status" in
+            200)
+              for name in "$package" SHA256SUMS; do
+                state="$(python3 .github/scripts/release-artifact.py asset-state "$release_json" "$RELEASE_TAG" "$name")"
+                if [ "$state" = "missing" ]; then
+                  gh release upload "$RELEASE_TAG" "$PACKAGE_OUTPUT/$name"
+                fi
+              done
+              ;;
+            404)
+              prerelease=()
+              if [[ "$PACKAGE_VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+              gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes "${prerelease[@]}" "$candidate" "$manifest"
+              ;;
+            *)
+              echo "GitHub Release lookup failed (HTTP $status); refusing to assume release absence." >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/release-asset-check"
+          gh release download "$RELEASE_TAG" --pattern "$package" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release-asset-check"
+          python3 .github/scripts/release-artifact.py compare "$candidate" "$RUNNER_TEMP/release-asset-check/$package"
+          python3 .github/scripts/release-artifact.py compare "$manifest" "$RUNNER_TEMP/release-asset-check/SHA256SUMS"
+          (cd "$RUNNER_TEMP/release-asset-check" && sha256sum --check SHA256SUMS)

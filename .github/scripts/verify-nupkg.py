@@ -1,4 +1,5 @@
 """Verify the distributable archive before any publishing side effects."""
+import os
 import pathlib
 import sys
 import xml.etree.ElementTree as ET
@@ -38,6 +39,11 @@ if license_node.attrib.get("type") != "expression" or license_node.text != "GPL-
     raise SystemExit("NuGet license must be GPL-3.0-only")
 if first("readme").text != "PACKAGE_README.md":
     raise SystemExit("NuGet package readme metadata is incorrect")
+commit = os.environ.get("GITHUB_SHA")
+if commit:
+    repository = first("repository")
+    if repository.attrib.get("commit") != commit or repository.attrib.get("type") != "git":
+        raise SystemExit(f"NuGet repository commit must match tested HEAD {commit}")
 dependencies = [e for e in nuspec.iter() if localname(e) == "dependency"]
 protobuf = [e for e in dependencies if e.attrib.get("id") == "Google.Protobuf"]
 if len(protobuf) != 1 or protobuf[0].attrib.get("version") not in ("3.36.2", "[3.36.2,)"):
