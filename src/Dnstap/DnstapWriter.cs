@@ -17,6 +17,7 @@ public sealed class DnstapWriter : IAsyncDisposable
     private readonly bool _leaveOpen;
     private readonly int _maxDataLength;
     private readonly TimeSpan _operationTimeout;
+    private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ArrayBufferWriter<byte> _controlBuffer = new();
     private readonly byte[] _dataHeader = new byte[4];
@@ -32,8 +33,13 @@ public sealed class DnstapWriter : IAsyncDisposable
     /// <summary>Creates a file or duplex writer. Duplex operations default to a 30-second timeout.</summary>
     public DnstapWriter(Stream stream, DnstapStreamMode mode, bool leaveOpen = true,
         int maxDataLength = FrameCodec.DefaultMaxSendLength, TimeSpan? operationTimeout = null)
+        : this(stream, mode, leaveOpen, maxDataLength, operationTimeout, TimeProvider.System) { }
+
+    internal DnstapWriter(Stream stream, DnstapStreamMode mode, bool leaveOpen,
+        int maxDataLength, TimeSpan? operationTimeout, TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(timeProvider);
         if (!Enum.IsDefined(mode))
             throw new ArgumentOutOfRangeException(nameof(mode));
         if (!stream.CanWrite || (mode == DnstapStreamMode.Duplex && !stream.CanRead))
@@ -44,6 +50,7 @@ public sealed class DnstapWriter : IAsyncDisposable
         _operationTimeout = operationTimeout ?? TimeSpan.FromSeconds(30);
         if (_operationTimeout <= TimeSpan.Zero || _operationTimeout.TotalMilliseconds > int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(operationTimeout));
+        _timeProvider = timeProvider;
         _stream = stream;
         _mode = mode;
         _leaveOpen = leaveOpen;
@@ -135,9 +142,9 @@ public sealed class DnstapWriter : IAsyncDisposable
             BinaryPrimitives.WriteUInt32BigEndian(_dataHeader, (uint)payload.Length);
             try
             {
-                await StreamDeadline.WriteAsync(_stream, _dataHeader, WriteTimeout, cancellationToken)
+                await StreamDeadline.WriteAsync(_stream, _dataHeader, WriteTimeout, cancellationToken, timeProvider: _timeProvider)
                     .ConfigureAwait(false);
-                await StreamDeadline.WriteAsync(_stream, payload, WriteTimeout, cancellationToken)
+                await StreamDeadline.WriteAsync(_stream, payload, WriteTimeout, cancellationToken, timeProvider: _timeProvider)
                     .ConfigureAwait(false);
             }
             catch
@@ -178,7 +185,7 @@ public sealed class DnstapWriter : IAsyncDisposable
         try
         {
             await WriteControlAsync(ControlTypes.Stop, cancellationToken).ConfigureAwait(false);
-            await StreamDeadline.FlushAsync(_stream, WriteTimeout, cancellationToken).ConfigureAwait(false);
+            await StreamDeadline.FlushAsync(_stream, WriteTimeout, cancellationToken, _timeProvider).ConfigureAwait(false);
             if (_mode == DnstapStreamMode.Duplex)
             {
                 ControlFrame finished = await ReadControlAsync(cancellationToken).ConfigureAwait(false);
@@ -201,7 +208,7 @@ public sealed class DnstapWriter : IAsyncDisposable
             ? new ControlFrame(type, new ReadOnlyMemory<byte>[] { ControlTypes.DnstapContentType.ToArray() })
             : new ControlFrame(type));
         await StreamDeadline.WriteAsync(_stream, _controlBuffer.WrittenMemory, WriteTimeout,
-            cancellationToken, "Frame Streams control write").ConfigureAwait(false);
+            cancellationToken, "Frame Streams control write", _timeProvider).ConfigureAwait(false);
     }
 
     private async Task<ControlFrame> ReadControlAsync(CancellationToken cancellationToken)
@@ -209,7 +216,7 @@ public sealed class DnstapWriter : IAsyncDisposable
         byte[] header = new byte[8];
         try
         {
-            await StreamDeadline.ReadExactlyAsync(_stream, header, _operationTimeout, cancellationToken)
+            await StreamDeadline.ReadExactlyAsync(_stream, header, _operationTimeout, cancellationToken, _timeProvider)
                 .ConfigureAwait(false);
             if (BinaryPrimitives.ReadUInt32BigEndian(header) != 0)
                 throw new InvalidDataException("Expected a Frame Streams control frame.");
@@ -217,7 +224,7 @@ public sealed class DnstapWriter : IAsyncDisposable
             if (length < 4 || length > FrameCodec.MaxControlLength)
                 throw new InvalidDataException("Invalid Frame Streams control length.");
             byte[] payload = new byte[(int)length];
-            await StreamDeadline.ReadExactlyAsync(_stream, payload, _operationTimeout, cancellationToken)
+            await StreamDeadline.ReadExactlyAsync(_stream, payload, _operationTimeout, cancellationToken, _timeProvider)
                 .ConfigureAwait(false);
             if (ControlCodec.TryDecode(new ReadOnlySequence<byte>(payload), out ControlFrame? control) != OperationStatus.Done)
                 throw new InvalidDataException("Invalid Frame Streams control payload.");
@@ -231,14 +238,23 @@ public sealed class DnstapWriter : IAsyncDisposable
 
     private async Task AcquireAsync(CancellationToken cancellationToken)
     {
-        if (_mode == DnstapStreamMode.Duplex)
-        {
-            if (!await _gate.WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false))
-                throw new TimeoutException("Timed out waiting for writer completion.");
-        }
-        else
+        if (_mode != DnstapStreamMode.Duplex)
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using ITimer timer = _timeProvider.CreateTimer(
+            static state => ((CancellationTokenSource)state!).Cancel(),
+            deadline, _operationTimeout, Timeout.InfiniteTimeSpan);
+        try
+        {
+            await _gate.WaitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Timed out waiting for writer completion.");
         }
     }
 

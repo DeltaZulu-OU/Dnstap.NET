@@ -1,26 +1,27 @@
 namespace Dnstap.Protocol;
 
-// Centralizes cancellation and deadline behavior for both Frame Streams senders.
-// The static delegates avoid per-write closure allocations.
+// Centralizes deadline cancellation while keeping request state out of closures.
 internal static class StreamDeadline
 {
     internal static Task WriteAsync(Stream stream, ReadOnlyMemory<byte> data, TimeSpan? timeout,
-        CancellationToken cancellationToken, string description = "Frame Streams write") =>
+        CancellationToken cancellationToken, string description = "Frame Streams write",
+        TimeProvider? timeProvider = null) =>
         ExecuteAsync((stream, data), static (state, token) => state.stream.WriteAsync(state.data, token),
-            timeout, cancellationToken, description);
+            timeout, cancellationToken, description, timeProvider);
 
     internal static Task ReadExactlyAsync(Stream stream, Memory<byte> data, TimeSpan timeout,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken, TimeProvider? timeProvider = null) =>
         ExecuteAsync((stream, data), static (state, token) => state.stream.ReadExactlyAsync(state.data, token),
-            timeout, cancellationToken, "Frame Streams control read");
+            timeout, cancellationToken, "Frame Streams control read", timeProvider);
 
-    internal static Task FlushAsync(Stream stream, TimeSpan? timeout, CancellationToken cancellationToken) =>
+    internal static Task FlushAsync(Stream stream, TimeSpan? timeout, CancellationToken cancellationToken,
+        TimeProvider? timeProvider = null) =>
         ExecuteAsync(stream, static (state, token) => new ValueTask(state.FlushAsync(token)),
-            timeout, cancellationToken, "Frame Streams flush");
+            timeout, cancellationToken, "Frame Streams flush", timeProvider);
 
     private static async Task ExecuteAsync<TState>(TState state,
         Func<TState, CancellationToken, ValueTask> operation, TimeSpan? timeout,
-        CancellationToken cancellationToken, string description)
+        CancellationToken cancellationToken, string description, TimeProvider? timeProvider)
     {
         if (timeout is null)
         {
@@ -29,7 +30,9 @@ internal static class StreamDeadline
         }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout.Value);
+        using ITimer timer = (timeProvider ?? TimeProvider.System).CreateTimer(
+            static state => ((CancellationTokenSource)state!).Cancel(),
+            deadline, timeout.Value, Timeout.InfiniteTimeSpan);
         try
         {
             // WaitAsync also bounds streams that disregard cancellation.
