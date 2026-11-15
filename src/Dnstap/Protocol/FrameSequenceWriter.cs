@@ -35,7 +35,8 @@ internal sealed class FrameSequenceWriter(
                 FrameCodec.WriteControl(_outgoing,
                     new ControlFrame(ControlTypes.Start,
                         new ReadOnlyMemory<byte>[] { ControlTypes.DnstapContentType.ToArray() }));
-                await WriteStreamAsync(_outgoing.WrittenMemory, cancellationToken).ConfigureAwait(false);
+                await StreamDeadline.WriteAsync(stream, _outgoing.WrittenMemory, operationTimeout, cancellationToken)
+                    .ConfigureAwait(false);
                 _started = true;
             }
             catch
@@ -66,8 +67,10 @@ internal sealed class FrameSequenceWriter(
             try
             {
                 // Writes are serialized by _gate. The caller's payload is not copied.
-                await WriteStreamAsync(_dataHeader, cancellationToken).ConfigureAwait(false);
-                await WriteStreamAsync(data, cancellationToken).ConfigureAwait(false);
+                await StreamDeadline.WriteAsync(stream, _dataHeader, operationTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+                await StreamDeadline.WriteAsync(stream, data, operationTimeout, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch
             {
@@ -113,8 +116,10 @@ internal sealed class FrameSequenceWriter(
         {
             _outgoing.ResetWrittenCount();
             FrameCodec.WriteControl(_outgoing, new ControlFrame(ControlTypes.Stop));
-            await WriteStreamAsync(_outgoing.WrittenMemory, cancellationToken).ConfigureAwait(false);
-            await FlushStreamAsync(cancellationToken).ConfigureAwait(false);
+            await StreamDeadline.WriteAsync(stream, _outgoing.WrittenMemory, operationTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+            await StreamDeadline.FlushAsync(stream, operationTimeout, cancellationToken)
+                .ConfigureAwait(false);
             _completed = true;
         }
         catch
@@ -134,45 +139,6 @@ internal sealed class FrameSequenceWriter(
         else
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async Task WriteStreamAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
-    {
-        if (operationTimeout is not TimeSpan timeout)
-        {
-            await stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout);
-        try
-        {
-            await stream.WriteAsync(payload, deadline.Token).AsTask()
-                .WaitAsync(deadline.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException("Frame Streams write timed out.");
-        }
-    }
-
-    private async Task FlushStreamAsync(CancellationToken cancellationToken)
-    {
-        if (operationTimeout is not TimeSpan timeout)
-        {
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            return;
-        }
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout);
-        try
-        {
-            await stream.FlushAsync(deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException("Frame Streams flush timed out.");
         }
     }
 
