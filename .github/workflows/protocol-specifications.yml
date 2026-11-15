@@ -127,13 +127,13 @@ jobs:
         with:
           go-version: '1.25.6'
       - name: Build Tapper
-        run: dotnet restore Tapper/Tapper.csproj --locked-mode && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+        run: dotnet restore src/Tapper/Tapper.csproj --locked-mode && dotnet build src/Tapper/Tapper.csproj -c Release --no-restore
       - name: Install pinned independent Go dnstap reader
         run: GOBIN="${{ runner.temp }}/dnstap-tools" go install github.com/dnstap/golang-dnstap/dnstap@ebb538e7d351a58861a8f348491828214a1d8db2
       - name: Validate Tapper output in independent implementation
         run: |
           set -euo pipefail
-          dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- file --output "${{ runner.temp }}/tapper.fstrm" --count 3
+          dotnet run --project src/Tapper/Tapper.csproj -c Release --no-build -- file --output "${{ runner.temp }}/tapper.fstrm" --count 3
           "${{ runner.temp }}/dnstap-tools/dnstap" -j -r "${{ runner.temp }}/tapper.fstrm" > "${{ runner.temp }}/tapper.jsonl"
           jq -s -e 'length == 3 and all(.[]; .type == "MESSAGE" and .identity == "tapper" and .message.type == "CLIENT_QUERY" and .message.socket_protocol == "UDP" and .message.query_address == "192.0.2.10" and .message.response_port == 53 and (.message.query_message | contains("example.com.")))' "${{ runner.temp }}/tapper.jsonl"
       - name: Validate Tapper duplex output in independent Go receiver
@@ -149,7 +149,7 @@ jobs:
             sleep 0.1
           done
           [[ "$ready" -eq 1 ]]
-          dotnet run --project Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16053 --count 3
+          dotnet run --project src/Tapper/Tapper.csproj -c Release --no-build -- tcp --host 127.0.0.1 --port 16053 --count 3
           for i in {1..100}; do
             if [[ "$(wc -l < "${{ runner.temp }}/socket.jsonl")" -ge 3 ]]; then break; fi
             sleep 0.1
@@ -178,7 +178,7 @@ jobs:
         with:
           global-json-file: global.json
       - name: Build Tapper
-        run: dotnet restore Tapper/Tapper.csproj --locked-mode && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+        run: dotnet restore src/Tapper/Tapper.csproj --locked-mode && dotnet build src/Tapper/Tapper.csproj -c Release --no-restore
       - name: Download and verify DNS-collector v3.3.7
         run: |
           set -euo pipefail
