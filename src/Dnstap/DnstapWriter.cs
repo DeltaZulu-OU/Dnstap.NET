@@ -244,17 +244,15 @@ public sealed class DnstapWriter : IAsyncDisposable
             return;
         }
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        using ITimer timer = _timeProvider.CreateTimer(
-            static state => ((CancellationTokenSource)state!).Cancel(),
-            deadline, _operationTimeout, Timeout.InfiniteTimeSpan);
+        using var timeout = new CancellationTokenSource(_operationTimeout, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
-            await _gate.WaitAsync(deadline.Token).ConfigureAwait(false);
+            await _gate.WaitAsync(linked.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException("Timed out waiting for writer completion.");
+            throw new TimeoutException("Timed out waiting for the writer lock.");
         }
     }
 

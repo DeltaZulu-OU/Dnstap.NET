@@ -29,17 +29,15 @@ internal static class StreamDeadline
             return;
         }
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        using ITimer timer = (timeProvider ?? TimeProvider.System).CreateTimer(
-            static state => ((CancellationTokenSource)state!).Cancel(),
-            deadline, timeout.Value, Timeout.InfiniteTimeSpan);
+        using var deadline = new CancellationTokenSource(timeout.Value, timeProvider ?? TimeProvider.System);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
             // WaitAsync also bounds streams that disregard cancellation.
-            await operation(state, deadline.Token).AsTask()
-                .WaitAsync(deadline.Token).ConfigureAwait(false);
+            await operation(state, linked.Token).AsTask()
+                .WaitAsync(linked.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException($"{description} timed out.");
         }
