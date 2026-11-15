@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - '**'
+    # A commit containing only Markdown changes does not require protocol tests.
+    # Mixed Markdown and source/config changes still trigger all CI jobs.
+    paths-ignore:
+      - '**/*.md'
   workflow_dispatch:
 
 permissions:
