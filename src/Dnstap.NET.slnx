@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../.editorconfig" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="Dnstap/Dnstap.csproj" />
+    <Project Path="Tapper/Tapper.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="../tests/Dnstap.Tests/Dnstap.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -7,6 +7,6 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../src/Dnstap/Dnstap.csproj" />
+    <ProjectReference Include="..\Dnstap\Dnstap.csproj" />
   </ItemGroup>
 </Project>
