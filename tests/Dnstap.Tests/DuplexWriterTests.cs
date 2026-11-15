@@ -2,6 +2,7 @@ using System.Buffers;
 using Dnstap.Protocol;
 using Dnstap.Tests.Protocol;
 using Google.Protobuf;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Dnstap.Tests;
@@ -289,25 +290,32 @@ public sealed class DuplexWriterTests
     [TestMethod]
     public async Task DisposeRacingCompletionReleasesOwnedStreamEvenWhenLockWaitTimesOut()
     {
+        var clock = new FakeTimeProvider();
         await using var stream = new ControlledShutdownStream();
         var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex,
-            leaveOpen: false, operationTimeout: TimeSpan.FromMilliseconds(400));
+            leaveOpen: false, maxDataLength: 98_304,
+            operationTimeout: TimeSpan.FromSeconds(10), timeProvider: clock);
         await writer.StartAsync();
 
         Task completing = writer.CompleteAsync();
         await stream.StopWriteStarted.WaitAsync(TimeSpan.FromSeconds(3));
         Task disposing = writer.DisposeAsync().AsTask();
-        // STOP and FINISH are separate bounded operations; completion can hold the
-        // outer lock longer than disposal's single lock-wait timeout.
-        await Task.Delay(220);
+        // Advance halfway through disposal's lock deadline, then let STOP finish.
+        // The FINISH deadline now ends after the disposal lock deadline.
+        clock.Advance(TimeSpan.FromSeconds(5));
         stream.ReleaseStopWrite();
+        await stream.FinishReadStarted.WaitAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(5));
 
         await Assert.ThrowsExactlyAsync<TimeoutException>(
             () => disposing.WaitAsync(TimeSpan.FromSeconds(3)));
         Assert.AreEqual(1, stream.DisposeCalls, "Owned transport must be released even if the lock cannot be acquired.");
         Assert.ThrowsExactly<ObjectDisposedException>(() => writer.WriteAsync(Message()));
-        await Assert.ThrowsAsync<Exception>(() => completing.WaitAsync(TimeSpan.FromSeconds(3)));
-        await writer.DisposeAsync(); // Disposal stays idempotent after a timeout.
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsExactlyAsync<TimeoutException>(
+            () => completing.WaitAsync(TimeSpan.FromSeconds(3)));
+        await writer.DisposeAsync();
         Assert.AreEqual(1, stream.DisposeCalls);
     }
 
@@ -330,16 +338,21 @@ public sealed class DuplexWriterTests
         private readonly TaskCompletionSource _stopStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _releaseStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<int> _stalledFinish = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _finishReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _disposeCalls;
 
         internal Task StopWriteStarted => _stopStarted.Task;
+        internal Task FinishReadStarted => _finishReadStarted.Task;
         internal int DisposeCalls => Volatile.Read(ref _disposeCalls);
         internal void ReleaseStopWrite() => _releaseStop.TrySetResult();
 
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-            _responses.Position == _responses.Length
-                ? new ValueTask<int>(_stalledFinish.Task)
-                : _responses.ReadAsync(buffer, cancellationToken);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_responses.Position != _responses.Length)
+                return _responses.ReadAsync(buffer, cancellationToken);
+            _finishReadStarted.TrySetResult();
+            return new ValueTask<int>(_stalledFinish.Task);
+        }
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
