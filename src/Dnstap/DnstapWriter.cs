@@ -15,6 +15,7 @@ public sealed class DnstapWriter : IAsyncDisposable
     private readonly DnstapStreamMode _mode;
     private readonly int _maxDataLength;
     private readonly TimeSpan _operationTimeout;
+    private readonly bool _leaveOpen;
     private readonly SemaphoreSlim _completionGate = new(1, 1);
     private int _startAttempted;
     private int _disposed;
@@ -42,7 +43,9 @@ public sealed class DnstapWriter : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(operationTimeout));
         _stream = stream;
         _mode = mode;
-        _frames = new FrameSequenceWriter(stream, leaveOpen, maxDataLength,
+        _leaveOpen = leaveOpen;
+        // Stream ownership stays here so even a failed cleanup lock releases an owned transport.
+        _frames = new FrameSequenceWriter(stream, leaveOpen: true, maxDataLength,
             mode == DnstapStreamMode.Duplex ? _operationTimeout : null);
         _maxDataLength = maxDataLength;
     }
@@ -87,10 +90,13 @@ public sealed class DnstapWriter : IAsyncDisposable
         if (_faulted)
             throw new InvalidOperationException("Writer is faulted.");
         ArgumentNullException.ThrowIfNull(message);
-        if (!message.IsInitialized() || !Enum.IsDefined(message.Type) ||
-            (message.Type == Dnstap.Types.Type.Message && message.Message is null) ||
+        if (!message.IsInitialized())
+            throw new ArgumentException("dnstap required fields are missing.", nameof(message));
+        if (!Enum.IsDefined(message.Type) ||
             (message.Message is { } nested && !Enum.IsDefined(nested.Type)))
-            throw new ArgumentException("dnstap required fields must contain valid enum values.", nameof(message));
+            throw new ArgumentException("dnstap required enum values are invalid.", nameof(message));
+        if (message.Type == Dnstap.Types.Type.Message && message.Message is null)
+            throw new ArgumentException("dnstap MESSAGE requires a nested message.", nameof(message));
         int size = message.CalculateSize();
         if (size < 1 || size > _maxDataLength)
             throw new ArgumentOutOfRangeException(nameof(message), "dnstap message exceeds the configured frame size.");
@@ -146,7 +152,7 @@ public sealed class DnstapWriter : IAsyncDisposable
         try
         {
             await _stream.WriteAsync(payload, timeout.Token).AsTask()
-                .WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
+                .WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -161,7 +167,7 @@ public sealed class DnstapWriter : IAsyncDisposable
         try
         {
             await _stream.ReadExactlyAsync(destination, timeout.Token).AsTask()
-                .WaitAsync(_operationTimeout, cancellationToken).ConfigureAwait(false);
+                .WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -207,30 +213,34 @@ public sealed class DnstapWriter : IAsyncDisposable
             throw new ObjectDisposedException(nameof(DnstapWriter));
     }
 
-    /// <summary>Completes a healthy started duplex session before cleanup. Incomplete sessions remain faulted.</summary>
+    /// <summary>Completes healthy duplex sessions and always releases an owned transport, even on failure.</summary>
     public async ValueTask DisposeAsync()
     {
-        if (Volatile.Read(ref _disposed) != 0)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        await WaitForCompletionGateAsync(CancellationToken.None).ConfigureAwait(false);
+
+        bool acquired = false;
         try
         {
-            if (Volatile.Read(ref _disposed) != 0)
-                return;
-            try
-            {
-                if (_mode == DnstapStreamMode.Duplex && _started && !_finished && !_faulted && !_frames.IsFaulted)
-                    await CompleteStartedAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _disposed, 1);
-                await _frames.DisposeAsync().ConfigureAwait(false);
-            }
+            await WaitForCompletionGateAsync(CancellationToken.None).ConfigureAwait(false);
+            acquired = true;
+            if (_mode == DnstapStreamMode.Duplex && _started && !_finished && !_faulted && !_frames.IsFaulted)
+                await CompleteStartedAsync(CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
-            _completionGate.Release();
+            try
+            {
+                if (acquired)
+                    await _frames.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                if (acquired)
+                    _completionGate.Release();
+                if (!_leaveOpen)
+                    await _stream.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 }

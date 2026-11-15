@@ -149,7 +149,7 @@ internal sealed class FrameSequenceWriter(
         try
         {
             await stream.WriteAsync(payload, deadline.Token).AsTask()
-                .WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+                .WaitAsync(deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -168,7 +168,7 @@ internal sealed class FrameSequenceWriter(
         deadline.CancelAfter(timeout);
         try
         {
-            await stream.FlushAsync(deadline.Token).WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
