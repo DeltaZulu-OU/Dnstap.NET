@@ -20,7 +20,7 @@ public sealed class VirtualTimeWriterTests
         clock.Advance(TimeSpan.FromSeconds(10));
 
         await Assert.ThrowsExactlyAsync<TimeoutException>(() => starting.WaitAsync(TimeSpan.FromSeconds(3)));
-        Assert.IsTrue(peer.ReadCancelled, "Deadline must cancel the stream's actual read.");
+        await peer.ReadCancellationObserved.WaitAsync(TimeSpan.FromSeconds(3));
         CollectionAssert.AreEqual(Ready, peer.Written);
         await writer.DisposeAsync();
     }
@@ -76,12 +76,12 @@ public sealed class VirtualTimeWriterTests
         private readonly MemoryStream _output = new();
         private readonly TaskCompletionSource _readStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _readCalls;
-        private int _readCancelled;
+        private readonly TaskCompletionSource _readCancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal byte[] Written => _output.ToArray();
         internal Task ReadStarted => _readStarted.Task;
         internal int ReadCalls => Volatile.Read(ref _readCalls);
-        internal bool ReadCancelled => Volatile.Read(ref _readCancelled) != 0;
+        internal Task ReadCancellationObserved => _readCancelled.Task;
 
         public override async ValueTask<int> ReadAsync(Memory<byte> destination,
             CancellationToken cancellationToken = default)
@@ -96,7 +96,7 @@ public sealed class VirtualTimeWriterTests
             }
             catch (OperationCanceledException)
             {
-                Interlocked.Exchange(ref _readCancelled, 1);
+                _readCancelled.TrySetResult();
                 throw;
             }
             throw new InvalidOperationException("Unreachable");
