@@ -37,6 +37,8 @@ jobs:
         run: dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj --configuration Release --no-build --no-restore --logger "trx;LogFileName=protocol-tests.trx" --results-directory TestResults
       - name: Build Tapper
         run: dotnet restore Tapper/Tapper.csproj --locked-mode && dotnet build Tapper/Tapper.csproj -c Release --no-restore
+      - name: Validate solution build
+        run: dotnet build Dnstap.NET.slnx -c Release --no-restore
       - name: Compile performance harness (do not benchmark shared runner)
         run: dotnet restore benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj --locked-mode && dotnet build benchmarks/Dnstap.Benchmarks/Dnstap.Benchmarks.csproj -c Release --no-restore
       - name: Verify release version comparison
