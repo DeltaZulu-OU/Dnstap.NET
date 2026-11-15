@@ -1,15 +1,14 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-
-namespace Dnstap.Tests;
-
-[TestClass]
-public sealed class AssemblyBoundaryTests
+namespace Dnstap.Tests
 {
-    [TestMethod]
-    public void FrameStreamsImplementationIsNotPublicApi()
+    [TestClass]
+    public sealed class AssemblyBoundaryTests
     {
-        var exportedTypes = typeof(AssemblyMarker).Assembly.GetExportedTypes();
-        Assert.IsFalse(exportedTypes.Any(type =>
-            type.Namespace?.StartsWith("Dnstap.Protocol", StringComparison.Ordinal) == true));
+        [TestMethod]
+        public void FrameStreamsImplementationIsNotPublicApi()
+        {
+            var exportedTypes = typeof(AssemblyMarker).Assembly.GetExportedTypes();
+            Assert.DoesNotContain(type =>
+                type.Namespace?.StartsWith("Dnstap.Protocol", StringComparison.Ordinal) == true, exportedTypes);
+        }
     }
 }

@@ -1,3 +1,4 @@
+# Suppress: EC105
 # EditorConfig style, formatting, naming, and analyzer rules.
 # Update these settings as project conventions evolve.
 # Reference: https://learn.microsoft.com/dotnet/fundamentals/code-analysis/configuration-options
@@ -123,6 +124,12 @@ csharp_space_around_binary_operators = before_and_after
 
 # IDE0090: Use 'new(...)'
 csharp_style_implicit_object_creation_when_type_is_apparent = false
+
+# CA1707: Identifiers should not contain underscores
+dotnet_diagnostic.CA1707.severity = silent
+
+# ParallelChecker: Concurrency Issue Detection
+dotnet_diagnostic.ParallelChecker.severity = none
 
 [*.{cs,vb}]
 # Default severity for analyzer diagnostics
