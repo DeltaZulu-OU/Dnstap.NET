@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using Dnstap.Protocol;
+using Google.Protobuf;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Dnstap.Tests.Protocol;
