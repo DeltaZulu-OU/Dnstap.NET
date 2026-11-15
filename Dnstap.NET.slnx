@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Dnstap/Dnstap.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Dnstap.Tests/Dnstap.Tests.csproj" />
+  </Folder>
+  <Project Path="Tapper/Tapper.csproj" />
+</Solution>
