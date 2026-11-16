@@ -24,4 +24,4 @@ Independent interop with the Go dnstap implementation and DNS-collector remains 
 
 ## Deferred scope
 
-A public reader, early-FINISH detection during active writes, and custom transport/options abstractions remain separate feature decisions. Typed convenience record construction is provided by `DnsLogEntry` and `DnstapRecordFactory`, without changing the Frame Streams implementation. Their absence is not a writer conformance failure.
+A public reader, early-FINISH detection during active writes, and custom transport/options abstractions remain separate feature decisions. A public reader is deferred until a concrete consumer defines its receiving contract; the test-only reader remains an independent conformance oracle. Transport/options abstractions are deferred unless specific consumers require them. Typed convenience record construction is provided by `DnsLogEntry` and `DnstapRecordFactory`, without changing the Frame Streams implementation. Their absence is not a writer conformance failure.
