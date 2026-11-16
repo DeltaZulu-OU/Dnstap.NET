@@ -1,9 +1,9 @@
 # Dnstap.NET
 
-**Alpha.** A small .NET 10 library for writing [dnstap](https://dnstap.info/) DNS telemetry using the official protobuf schema and [Frame Streams](docs/FRAMESTREAMS-PROTOCOL.md). It is not a DNS server or a log collector.
+**Version 0.1.0.** A small .NET 10 library for writing [dnstap](https://dnstap.info/) DNS telemetry using the official protobuf schema and [Frame Streams](docs/FRAMESTREAMS-PROTOCOL.md). It is not a DNS server or a log collector.
 
 - `src/Dnstap/`: reusable library, generated `dnstap.proto` types, and the public `DnstapWriter`.
-- `Tapper/`: command-line test emitter that uses the library's public API.
+- `src/Tapper/`: command-line test emitter that uses the library's public API.
 - `tests/`: MSTest unit tests. CI also checks Tapper against independent Go dnstap tooling and DNS-collector.
 
 ## Using the library
@@ -60,8 +60,8 @@ For a connected, readable/writable TCP stream, use `new DnstapWriter(stream, Dns
 
 Tapper emits deterministic `example.com` DNS queries, with a distinct DNS transaction ID for each record.
 
-- File: `dotnet run --project Tapper/Tapper.csproj -- file --output capture.fstrm --count 3`
-- TCP collector: `dotnet run --project Tapper/Tapper.csproj -- tcp --host 127.0.0.1 --port 6000 --count 3`
+- File: `dotnet run --project src/Tapper/Tapper.csproj -- file --output capture.fstrm --count 3`
+- TCP collector: `dotnet run --project src/Tapper/Tapper.csproj -- tcp --host 127.0.0.1 --port 6000 --count 3`
 
 Append `--no-complete` to exercise automatic graceful disposal instead of explicitly calling `CompleteAsync()`. A count of `0` emits an empty but complete Frame Streams session. Tapper exits nonzero on failure.
 
@@ -77,7 +77,7 @@ The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/d
 
 ## NuGet publishing
 
-The `Dnstap.NET` package is published to DeltaZulu-OU GitHub Packages through a [manual release workflow](.github/workflows/publish.yml) after protocol, Go interoperability and DNS-collector tests pass. The package version is maintained in `Directory.Build.props`. See [release instructions](docs/RELEASING.md) for release checks, package inspection, repository permissions and recovery.
+The `Dnstap.NET` package is distributed internally through DeltaZulu-OU GitHub Packages using a [manual release workflow](.github/workflows/publish.yml) after protocol, Go interoperability and DNS-collector tests pass. The package version is maintained in `src/Directory.Build.props`. See [release instructions](docs/RELEASING.md) for release checks, package inspection, repository permissions and recovery.
 
 ## License
 
