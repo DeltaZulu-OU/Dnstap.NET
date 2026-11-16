@@ -1,6 +1,6 @@
 # Dnstap.NET
 
-**Version 0.1.0.** A small .NET 10 library for writing [dnstap](https://dnstap.info/) DNS telemetry using the official protobuf schema and [Frame Streams](docs/FRAMESTREAMS-PROTOCOL.md). It is not a DNS server or a log collector.
+A small .NET 10 library for writing [dnstap](https://dnstap.info/) DNS telemetry using the official protobuf schema and [Frame Streams](docs/FRAMESTREAMS-PROTOCOL.md). It is not a DNS server or a log collector.
 
 - `src/Dnstap/`: reusable library, generated `dnstap.proto` types, and the public `DnstapWriter`.
 - `src/Tapper/`: command-line test emitter that uses the library's public API.
@@ -74,10 +74,6 @@ The caller retains ownership of supplied streams by default (`leaveOpen: true`).
 Run `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release` for unit tests. GitHub Actions additionally validates Tapper file and TCP output against the pinned Go dnstap reader and **DNS-collector v3.3.7**; collector acceptance alone is not proof of strict protocol compliance.
 
 The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c). [Frame Streams protocol and implementation rules](docs/FRAMESTREAMS-PROTOCOL.md).
-
-## NuGet publishing
-
-The `Dnstap.NET` package is published to DeltaZulu-OU GitHub Packages and attached to a public GitHub Release through a [manual release workflow](.github/workflows/publish.yml) after protocol, Go interoperability and DNS-collector tests pass. NuGet registry installation requires a GitHub token, including for public packages; downloading the GitHub Release `.nupkg` asset does not. The package version is maintained in `src/Directory.Build.props`. See [release instructions](docs/RELEASING.md) for release checks, package inspection, repository permissions and recovery.
 
 ## License
 
