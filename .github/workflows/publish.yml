@@ -119,3 +119,38 @@ jobs:
             git tag --annotate "$RELEASE_TAG" --message "Release $RELEASE_TAG"
             git push origin "$RELEASE_TAG"
           fi
+      - name: Reconcile and verify GitHub Release archive and manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="Dnstap.NET.$PACKAGE_VERSION.nupkg"
+          candidate="$PACKAGE_OUTPUT/$package"
+          manifest="$PACKAGE_OUTPUT/SHA256SUMS"
+          release_json="$RUNNER_TEMP/release-metadata.json"
+          status="$(curl --fail-with-body --silent --show-error --output "$release_json" --write-out '%{http_code}' --header "Authorization: Bearer $GH_TOKEN" --header "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" || true)"
+          case "$status" in
+            200)
+              for name in "$package" SHA256SUMS; do
+                state="$(python3 .github/scripts/release-artifact.py asset-state "$release_json" "$RELEASE_TAG" "$name")"
+                if [ "$state" = "missing" ]; then
+                  gh release upload "$RELEASE_TAG" "$PACKAGE_OUTPUT/$name"
+                fi
+              done
+              ;;
+            404)
+              prerelease=()
+              if [[ "$PACKAGE_VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+              gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes "${prerelease[@]}" "$candidate" "$manifest"
+              ;;
+            *)
+              echo "GitHub Release lookup failed (HTTP $status); refusing to assume release absence." >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/release-asset-check"
+          gh release download "$RELEASE_TAG" --pattern "$package" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release-asset-check"
+          python3 .github/scripts/release-artifact.py compare "$candidate" "$RUNNER_TEMP/release-asset-check/$package"
+          python3 .github/scripts/release-artifact.py compare "$manifest" "$RUNNER_TEMP/release-asset-check/SHA256SUMS"
+          (cd "$RUNNER_TEMP/release-asset-check" && sha256sum --check SHA256SUMS)
