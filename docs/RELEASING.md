@@ -4,7 +4,7 @@ Dnstap.NET is published under the NuGet package ID `Dnstap.NET` to the DeltaZulu
 
 ## Prepare a version
 
-Update the single `<Version>` property in repository-root `src/Directory.Build.props`. The initial internal release version is `0.1.0`. Each new release must have a higher SemVer precedence than every existing `v*` release tag, excluding identical same-commit tags used for recovery. Pre-release numeric identifiers have standard SemVer ordering. No build metadata suffixes are supported by this publishing policy.
+Update the single `<Version>` property in repository-root `src/Directory.Build.props`. The initial release version is `0.1.0`. Each new release must have a higher SemVer precedence than every existing `v*` release tag, excluding identical same-commit tags used for recovery. Pre-release numeric identifiers have standard SemVer ordering. No build metadata suffixes are supported by this publishing policy.
 
 Merge the version change into `main` and verify the normal **Protocol specifications** workflow passes. The normal workflow checks package creation and metadata, then restores and executes a standalone consumer using the newly built local NuGet archive, without a project reference to the library. It does not publish.
 
@@ -16,15 +16,15 @@ The workflow first checks the version and release tags, then invokes the existin
 
 Before publication, it verifies the NuGet archive contains the `net10.0` library, readme, GPL-3.0-only license metadata, and the required Google.Protobuf dependency; Grpc.Tools must not appear as a runtime dependency.
 
-The final steps push the tested package to `https://nuget.pkg.github.com/DeltaZulu-OU/index.json` using the Actions `GITHUB_TOKEN`. An isolated NuGet consumer then restores directly from the authenticated registry, with an **exact-ID `Dnstap.NET` source mapping to GitHub Packages** and a wildcard mapping of other dependencies to nuget.org. It compares the downloaded `.nupkg` SHA-256 against the tested archive and exercises the public API. The candidate's NuGet repository metadata also records the full tested Git commit, which is checked against `GITHUB_SHA` in CI. Only after this verification does the workflow create an annotated `v<Version>` tag. It does **not** publish to nuget.org or create a GitHub Release with publicly downloadable binaries.
+The final steps push the tested package to `https://nuget.pkg.github.com/DeltaZulu-OU/index.json` using the Actions `GITHUB_TOKEN`. An isolated NuGet consumer then restores directly from the authenticated registry, with an **exact-ID `Dnstap.NET` source mapping to GitHub Packages** and a wildcard mapping of other dependencies to nuget.org. It compares the downloaded `.nupkg` SHA-256 against the tested archive and exercises the public API. The candidate's NuGet repository metadata also records the full tested Git commit, which is checked against `GITHUB_SHA` in CI. Only after verification does the workflow create an annotated `v<Version>` tag and a public GitHub Release containing the tested `.nupkg` and `SHA256SUMS`. It does **not** publish to nuget.org.
 
 The GitHub Actions token must have permission to write repository contents and organization packages. Organization policy may impose additional package publication restrictions.
 
-## Internal distribution and recovery
+## Public release and authenticated NuGet restore
 
-The source repository is public. Do not attach the package to a GitHub Release: release assets would be publicly downloadable. The workflow publishes only to GitHub Packages and creates a public source tag. Ensure the organization package visibility is **private or internal**, never public, and grant the intended teams/repositories read access. GitHub Packages access settings, not NuGet source mapping, restrict who can download the package. See [GitHub package access settings](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+The source repository, release tag, GitHub Release, and attached `.nupkg` archive are public. Anyone can download the release asset directly. Using `Dnstap.NET` as a dependency through GitHub's NuGet registry requires authentication, **even if the package is marked public**. An authorized GitHub token with `read:packages` is required for installations outside appropriately authorized GitHub Actions workflows. Source mapping controls which feed supplies the package; it is not an access-control mechanism. See [GitHub's NuGet authentication instructions](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-nuget-registry#authenticating-to-github-packages).
 
-If publishing succeeds but tag creation fails, rerunning the same commit and version is supported only when the registry package is byte-identical. The clean registry restore checks this before creating the tag. A conflicting package cannot be overwritten under the same version. Workflow artifacts are retained temporarily, not permanently.
+If publication succeeds but a later step fails, rerun only from the same commit and version. The workflow rejects registry package bytes that differ from the tested candidate, restores missing GitHub Release assets, and compares existing assets with the tested bytes. A conflicting asset fails rather than being overwritten.
 
 ## Package source mapping
 
@@ -56,7 +56,7 @@ The availability or ownership of the `Dnstap.NET` ID on nuget.org has not been e
 
 ## NuGet consumers
 
-GitHub Packages requires authentication where applicable. Configure the organization feed as a NuGet package source and install `Dnstap.NET` using an authorized token. See [GitHub's NuGet registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-nuget-registry).
+GitHub Packages' NuGet registry requires authentication for package installation, including public packages. Configure the organization feed as a NuGet package source and install `Dnstap.NET` using an authorized token. See [GitHub's NuGet registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-nuget-registry).
 
 The repository commits `packages.lock.json` for `src/Dnstap`, `src/Tapper`, and `tests/Dnstap.Tests`, using `RestorePackagesWithLockFile=true` in `src/Directory.Build.props`. Both regular CI and the publishing workflow enforce `dotnet restore --locked-mode`, matching the dependency-graph reproducibility approach used by DeltaZulu.Kql. When dependencies change, regenerate and review the affected lock files deliberately before merging. Package locks pin the restored dependency graph and hashes; they do not make compilation or remote publication atomic.
 

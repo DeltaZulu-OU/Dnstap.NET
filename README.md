@@ -77,7 +77,7 @@ The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/d
 
 ## NuGet publishing
 
-The `Dnstap.NET` package is distributed internally through DeltaZulu-OU GitHub Packages using a [manual release workflow](.github/workflows/publish.yml) after protocol, Go interoperability and DNS-collector tests pass. The package version is maintained in `src/Directory.Build.props`. See [release instructions](docs/RELEASING.md) for release checks, package inspection, repository permissions and recovery.
+The `Dnstap.NET` package is published to DeltaZulu-OU GitHub Packages and attached to a public GitHub Release through a [manual release workflow](.github/workflows/publish.yml) after protocol, Go interoperability and DNS-collector tests pass. NuGet registry installation requires a GitHub token, including for public packages; downloading the GitHub Release `.nupkg` asset does not. The package version is maintained in `src/Directory.Build.props`. See [release instructions](docs/RELEASING.md) for release checks, package inspection, repository permissions and recovery.
 
 ## License
 
