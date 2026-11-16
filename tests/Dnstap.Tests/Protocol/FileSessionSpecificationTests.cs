@@ -7,6 +7,15 @@ namespace Dnstap.Tests.Protocol
     public sealed class FileSessionSpecificationTests
     {
         [TestMethod]
+        public void Fs005_FileReaderRejectsInvalidArgumentsBeforeEnumeration()
+        {
+            using var stream = new MemoryStream();
+            _ = Assert.ThrowsExactly<ArgumentNullException>(() => FileFrameSession.ReadAsync(null!));
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => FileFrameSession.ReadAsync(stream, maxDataLength: 0));
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => FileFrameSession.ReadAsync(stream, maxDataLength: int.MaxValue));
+        }
+
+        [TestMethod]
         public async Task Fs011_AcceptsStartDataStopFromCanonicalWireBytes()
         {
             await using var stream = new MemoryStream(WireFixture.Concat(

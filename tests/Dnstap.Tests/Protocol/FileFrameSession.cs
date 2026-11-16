@@ -1,214 +1,204 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
+
 using Dnstap.Protocol;
 
 namespace Dnstap.Tests.Protocol
 {
-    internal static class FileFrameSession
+
+internal static class FileFrameSession
+{
+    private const int InitialBufferSize = 8192;
+
+    // Check arguments before returning the iterator rather than during its first MoveNextAsync.
+    // The incoming stream stays caller-owned; emitted payloads never borrow pooled storage.
+    internal static IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAsync(
+        Stream stream,
+        int maxDataLength = TestFrameCodec.DefaultMaxReceiveLength,
+        CancellationToken cancellationToken = default)
     {
-        /// <summary>
-        /// The caller owns the incoming stream. Returned data is caller-owned, not a borrowed pooled buffer.
-        /// </summary>
-        /// <param name="stream"></param>
-        /// <param name="maxDataLength"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
-        /// <exception cref="ArgumentOutOfRangeException"></exception>
-        /// <exception cref="InvalidDataException"></exception>
-        internal static async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAsync(
-            Stream stream,
-            int maxDataLength = TestFrameCodec.DefaultMaxReceiveLength,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxDataLength, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxDataLength, int.MaxValue - 8);
+
+        return ReadFramesAsync(stream, maxDataLength, cancellationToken);
+    }
+
+    private static async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadFramesAsync(
+        Stream stream,
+        int maxDataLength,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using var reader = new FrameReader(stream, maxDataLength);
+        while (true)
         {
-            ArgumentNullException.ThrowIfNull(stream);
-            if (maxDataLength is < 1 or > (int.MaxValue - 8))
-            {
-                throw new ArgumentOutOfRangeException(nameof(maxDataLength));
-            }
+            FrameReadResult result = await reader.ReadNextAsync(cancellationToken).ConfigureAwait(false);
+            if (result.Stopped)
+                yield break;
 
-            var buffer = ArrayPool<byte>.Shared.Rent(8192);
-            var buffered = 0;
-            var start = 0;
-            var started = false;
-            try
-            {
-                while (true)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var sequence = new ReadOnlySequence<byte>(buffer.AsMemory(start, buffered - start));
-                    var result = TestFrameCodec.TryRead(sequence, out var frame, out var consumed, maxDataLength);
-                    if (result == OperationStatus.InvalidData)
-                    {
-                        throw new InvalidDataException("Malformed Frame Streams frame.");
-                    }
-
-                    if (result == OperationStatus.Done)
-                    {
-                        byte[]? payload = null;
-                        var stop = false;
-                        if (frame.Kind == FrameKind.Control)
-                        {
-                            if (ControlCodec.TryDecode(frame.Payload, out var control) != OperationStatus.Done)
-                            {
-                                throw new InvalidDataException("Malformed control frame.");
-                            }
-
-                            var type = control!.Type;
-                            if (!started)
-                            {
-                                if (type != ControlTypes.Start)
-                                {
-                                    throw new InvalidDataException("File must begin with START.");
-                                }
-
-                                if (control.ContentTypes.Count == 1
-                                    && !control.ContentTypes[0].Span.SequenceEqual(ControlTypes.DnstapContentType))
-                                {
-                                    throw new InvalidDataException("Unexpected dnstap content type.");
-                                }
-
-                                started = true;
-                            }
-                            else if (type == ControlTypes.Stop)
-                            {
-                                stop = true;
-                            }
-                            else if (type is ControlTypes.Accept or ControlTypes.Ready
-                                     or ControlTypes.Start or ControlTypes.Finish)
-                            {
-                                throw new InvalidDataException("Unexpected control frame during file session.");
-                            }
-                            // Unknown numeric controls are ignored only after START.
-                        }
-                        else
-                        {
-                            if (!started)
-                            {
-                                throw new InvalidDataException("Data frame received before START.");
-                            }
-
-                            payload = frame.Payload.ToArray();
-                        }
-
-                        start += checked((int)consumed);
-                        var remaining = buffered - start;
-                        if (stop)
-                        {
-                            if (remaining != 0)
-                            {
-                                throw new InvalidDataException("Trailing bytes after STOP.");
-                            }
-
-                            cancellationToken.ThrowIfCancellationRequested();
-                            var read = await stream.ReadAsync(buffer.AsMemory(0, 1), cancellationToken)
-                                .ConfigureAwait(false);
-                            if (read != 0)
-                            {
-                                throw new InvalidDataException("Trailing bytes after STOP.");
-                            }
-
-                            yield break;
-                        }
-
-                        if (remaining == 0)
-                        {
-                            start = 0;
-                            buffered = 0;
-                            // Release a megabyte-sized rental as soon as it is drained.
-                            if (buffer.Length > 8192)
-                            {
-                                // Rent before returning the old buffer, so a failed
-                                // rent cannot leave the same array owned twice.
-                                var smaller = ArrayPool<byte>.Shared.Rent(8192);
-                                ArrayPool<byte>.Shared.Return(buffer);
-                                buffer = smaller;
-                            }
-                        }
-                        // Otherwise keep [start, buffered) as a borrowed slice.
-                        // Do not move bytes once for each frame.
-                        if (payload is not null)
-                        {
-                            yield return payload;
-                        }
-
-                        continue;
-                    }
-
-                    // NeedMoreData: compact at most once per stream read, never per frame.
-                    // After a large frame, switch back to the normal buffer if the
-                    // incomplete tail is small enough.
-                    if (start > 0)
-                    {
-                        var remaining = buffered - start;
-                        if (buffer.Length > 8192 && remaining <= 8192)
-                        {
-                            var smaller = ArrayPool<byte>.Shared.Rent(8192);
-                            buffer.AsSpan(start, remaining).CopyTo(smaller);
-                            ArrayPool<byte>.Shared.Return(buffer);
-                            buffer = smaller;
-                        }
-                        else if (remaining > 0)
-                        {
-                            buffer.AsSpan(start, remaining).CopyTo(buffer);
-                        }
-
-                        start = 0;
-                        buffered = remaining;
-                    }
-
-                    // TryRead has already checked the declared length against the
-                    // configured limit. Size the rental from the complete frame
-                    // length as soon as its header is known, even when the current
-                    // buffer is not yet full after compaction.
-                    var needed = buffered + 1;
-                    if (buffered >= 4)
-                    {
-                        var declaredLength = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(0, 4));
-#pragma warning disable IDE0045 // Convert to conditional expression
-                        if (declaredLength != 0)
-                        {
-                            needed = checked((int)declaredLength + 4);
-                        }
-                        else if (buffered >= 8)
-                        {
-                            needed = checked((int)BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(4, 4)) + 8);
-                        }
-                        else
-                        {
-                            needed = 8;
-                        }
-#pragma warning restore IDE0045 // Convert to conditional expression
-                    }
-
-                    var maximum = Math.Max(512 + 8, maxDataLength + 4);
-                    if (needed > maximum)
-                    {
-                        throw new InvalidDataException("Frame cannot fit within the configured maximum.");
-                    }
-
-                    if (needed > buffer.Length)
-                    {
-                        var grown = ArrayPool<byte>.Shared.Rent(needed);
-                        buffer.AsSpan(0, buffered).CopyTo(grown);
-                        ArrayPool<byte>.Shared.Return(buffer);
-                        buffer = grown;
-                    }
-
-                    var count = await stream.ReadAsync(buffer.AsMemory(buffered), cancellationToken)
-                        .ConfigureAwait(false);
-                    if (count == 0)
-                    {
-                        throw new InvalidDataException("Unexpected EOF before STOP or inside a frame.");
-                    }
-
-                    buffered += count;
-                }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            if (result.Payload is not null)
+                yield return result.Payload;
         }
     }
+
+    private readonly record struct FrameReadResult(byte[]? Payload, bool Stopped = false);
+
+    private sealed class FrameReader(Stream stream, int maxDataLength) : IDisposable
+    {
+        private byte[] _buffer = ArrayPool<byte>.Shared.Rent(InitialBufferSize);
+        private int _start;
+        private int _buffered;
+        private bool _started;
+
+        public async Task<FrameReadResult> ReadNextAsync(CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var sequence = new ReadOnlySequence<byte>(_buffer.AsMemory(_start, _buffered - _start));
+                OperationStatus status = TestFrameCodec.TryRead(
+                    sequence, out FrameSlice frame, out long consumed, maxDataLength);
+                if (status == OperationStatus.InvalidData)
+                    throw new InvalidDataException("Malformed Frame Streams frame.");
+
+                if (status != OperationStatus.Done)
+                {
+                    await ReadMoreAsync(cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                FrameReadResult result = ProcessFrame(frame);
+                Advance(checked((int)consumed));
+                if (result.Stopped)
+                {
+                    await VerifyStopAsync(cancellationToken).ConfigureAwait(false);
+                    return result;
+                }
+
+                if (result.Payload is not null)
+                    return result;
+            }
+        }
+
+        private FrameReadResult ProcessFrame(FrameSlice frame)
+        {
+            if (frame.Kind == FrameKind.Control)
+                return ProcessControl(frame.Payload);
+
+            if (!_started)
+                throw new InvalidDataException("Data frame received before START.");
+
+            return new FrameReadResult(frame.Payload.ToArray());
+        }
+
+        private FrameReadResult ProcessControl(ReadOnlySequence<byte> payload)
+        {
+            if (ControlCodec.TryDecode(payload, out ControlFrame? control) != OperationStatus.Done)
+                throw new InvalidDataException("Malformed control frame.");
+
+            uint type = control!.Type;
+            if (!_started)
+            {
+                if (type != ControlTypes.Start)
+                    throw new InvalidDataException("File must begin with START.");
+                if (control.ContentTypes.Count == 1
+                    && !control.ContentTypes[0].Span.SequenceEqual(ControlTypes.DnstapContentType))
+                    throw new InvalidDataException("Unexpected dnstap content type.");
+                _started = true;
+                return default;
+            }
+
+            if (type == ControlTypes.Stop)
+                return new FrameReadResult(null, Stopped: true);
+
+            if (type is ControlTypes.Accept or ControlTypes.Ready or ControlTypes.Start or ControlTypes.Finish)
+                throw new InvalidDataException("Unexpected control frame during file session.");
+
+            // Unknown numeric controls are ignored only after START.
+            return default;
+        }
+
+        private void Advance(int consumed)
+        {
+            _start += consumed;
+            if (_start != _buffered)
+                return;
+
+            _start = 0;
+            _buffered = 0;
+            // Release a megabyte-sized rental as soon as it is drained.
+            if (_buffer.Length > InitialBufferSize)
+                ReplaceBuffer(InitialBufferSize, copyStart: 0, count: 0);
+        }
+
+        private async Task VerifyStopAsync(CancellationToken cancellationToken)
+        {
+            if (_buffered != _start)
+                throw new InvalidDataException("Trailing bytes after STOP.");
+
+            cancellationToken.ThrowIfCancellationRequested();
+            int read = await stream.ReadAsync(_buffer.AsMemory(0, 1), cancellationToken).ConfigureAwait(false);
+            if (read != 0)
+                throw new InvalidDataException("Trailing bytes after STOP.");
+        }
+
+        private async Task ReadMoreAsync(CancellationToken cancellationToken)
+        {
+            Compact();
+            int needed = GetRequiredBufferSize();
+            int maximum = Math.Max(512 + 8, maxDataLength + 4);
+            if (needed > maximum)
+                throw new InvalidDataException("Frame cannot fit within the configured maximum.");
+
+            if (needed > _buffer.Length)
+                ReplaceBuffer(needed, copyStart: 0, count: _buffered);
+
+            int count = await stream.ReadAsync(_buffer.AsMemory(_buffered), cancellationToken).ConfigureAwait(false);
+            if (count == 0)
+                throw new InvalidDataException("Unexpected EOF before STOP or inside a frame.");
+            _buffered += count;
+        }
+
+        private void Compact()
+        {
+            if (_start == 0)
+                return;
+
+            int remaining = _buffered - _start;
+            if (_buffer.Length > InitialBufferSize && remaining <= InitialBufferSize)
+                ReplaceBuffer(InitialBufferSize, copyStart: _start, count: remaining);
+            else if (remaining > 0)
+                _buffer.AsSpan(_start, remaining).CopyTo(_buffer);
+
+            _start = 0;
+            _buffered = remaining;
+        }
+
+        private int GetRequiredBufferSize()
+        {
+            if (_buffered < 4)
+                return _buffered + 1;
+
+            uint declared = BinaryPrimitives.ReadUInt32BigEndian(_buffer.AsSpan(0, 4));
+            if (declared != 0)
+                return checked((int)declared + 4);
+
+            return _buffered >= 8
+                ? checked((int)BinaryPrimitives.ReadUInt32BigEndian(_buffer.AsSpan(4, 4)) + 8)
+                : 8;
+        }
+
+        private void ReplaceBuffer(int size, int copyStart, int count)
+        {
+            // Rent before returning the old buffer; a failed rental does not lose ownership.
+            byte[] replacement = ArrayPool<byte>.Shared.Rent(size);
+            _buffer.AsSpan(copyStart, count).CopyTo(replacement);
+            ArrayPool<byte>.Shared.Return(_buffer);
+            _buffer = replacement;
+        }
+
+        public void Dispose() => ArrayPool<byte>.Shared.Return(_buffer);
+    }
+}
 }
