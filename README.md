@@ -54,6 +54,8 @@ await writer.WriteAsync(record);
 
 For a connected, readable/writable TCP stream, use `new DnstapWriter(stream, DnstapStreamMode.Duplex)`. The writer handles READY/ACCEPT/START and STOP/FINISH, but the caller owns the socket, TLS, reconnection and delivery policy. `CompleteAsync()` reports finalization failures; disposing a healthy duplex writer without explicit completion also performs a bounded shutdown.
 
+Use `await writer.FlushAsync()` to flush a buffered underlying stream safely under the writer's serialization lock. It emits no Frame Streams frame, requires an active session, and faults the session if the underlying flush fails or is interrupted. Duplex flushes use the configured operation timeout; file mode has none.
+
 `leaveOpen` defaults to `true`. The default maximum encoded record size is **96 KiB** (configurable with `maxDataLength`); duplex operations have a **30-second** per-operation timeout (configurable with `operationTimeout`). Concurrent writes are serialized without a guaranteed ordering. The official generated model provides protobuf serialization with `ToByteArray()` and parsing with `global::Dnstap.Dnstap.Parser.ParseFrom(bytes)`; these operate on protobuf messages, not complete Frame Streams files.
 
 ## Using Tapper

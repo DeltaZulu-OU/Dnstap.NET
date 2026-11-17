@@ -215,6 +215,39 @@ namespace Dnstap
             }
         }
 
+        /// <summary>Flushes pending stream bytes under the writer lock without emitting a Frame Streams frame.</summary>
+        /// <param name="cancellationToken"></param>
+        /// <exception cref="InvalidOperationException">The session is not started or is no longer healthy.</exception>
+        /// <exception cref="ObjectDisposedException">The writer is disposed.</exception>
+        public async Task FlushAsync(CancellationToken cancellationToken = default)
+        {
+            ThrowIfDisposed();
+            await AcquireAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfDisposed();
+                if (_state != SessionState.Started)
+                {
+                    throw new InvalidOperationException("Writer must be started and healthy before flushing.");
+                }
+
+                try
+                {
+                    await StreamDeadline.FlushAsync(_stream, WriteTimeout, _timeProvider, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    _state = SessionState.Faulted;
+                    throw;
+                }
+            }
+            finally
+            {
+                _ = _gate.Release();
+            }
+        }
+
         /// <summary>Sends STOP and, in duplex mode, waits for FINISH. An interrupted shutdown is terminal.</summary>
         /// <param name="cancellationToken"></param>
         /// <exception cref="InvalidOperationException"></exception>

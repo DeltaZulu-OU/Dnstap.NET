@@ -9,6 +9,8 @@
 
 Duplex `StartAsync` flushes READY before reading ACCEPT and flushes START before returning. Both flushes use the configured duplex operation deadline. This is essential for transports that buffer outgoing writes. File-mode startup remains unchanged.
 
+Public `DnstapWriter.FlushAsync(CancellationToken)` is necessary when the caller supplies a buffered or wrapped stream. Flushing that stream externally would race DATA/control writes and could violate framing order; the writer holds the same gate during public flush. Public flush emits no frames and requires the started state. An I/O failure or cancellation during flush faults the session; cancellation while waiting for the lock does not. Duplex mode applies the normal per-operation deadline, while file mode has no implicit deadline.
+
 ## Cancellation and incomplete I/O
 
 A duplex timeout bounds **the caller's wait**, not the lifetime of arbitrary custom `Stream` operations. A stream can disregard cancellation; the in-flight task can continue after `WriteAsync` returns a `TimeoutException`. In such cases the writer enters `Faulted`, never sends a further DATA frame, and must not be reused. Owned-frame data stays in a separate managed array, so late access does not reuse or overwrite a shared header. The stream owner remains responsible for handling any transport-level pending operations and choosing whether and when to close the transport. Disposing an owned stream can overlap pending noncooperative I/O.
