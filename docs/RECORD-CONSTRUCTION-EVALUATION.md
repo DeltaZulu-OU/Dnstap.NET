@@ -21,6 +21,22 @@ var factory = new DnstapRecordFactory("server-a"u8.ToArray(), "1.2"u8.ToArray())
 var record = factory.Create(entry);
 ```
 
+## Choosing a dnstap event type
+
+The event type describes the **observation point**, not just the DNS packet's query/response flag. Use the pair that describes the component producing the event:
+
+| Observer / traffic perspective | dnstap types | Meaning |
+|---|---|---|
+| Authoritative DNS server | `AUTH_QUERY`, `AUTH_RESPONSE` | Incoming resolver query and outgoing authoritative answer |
+| Recursive resolver, client-facing | `CLIENT_QUERY`, `CLIENT_RESPONSE` | Client query arriving at the resolver and response returned to that client |
+| Recursive resolver, upstream-facing | `RESOLVER_QUERY`, `RESOLVER_RESPONSE` | Resolver query sent upstream and response received from upstream |
+| Forwarding DNS server, upstream-facing | `FORWARDER_QUERY`, `FORWARDER_RESPONSE` | Downstream forwarding server's query to a recursive upstream and its reply |
+| Dynamic DNS update | `UPDATE_QUERY`, `UPDATE_RESPONSE` | DNS UPDATE operation and response at the corresponding observation point |
+
+The official schema also defines `STUB_*` and `TOOL_*` observations. Do not relabel an upstream recursor event `AUTH_*` just because the upstream target is authoritative. Event types are not inferred from packet flags by this library.
+
+**PowerDNS Recursor:** its normal `dnstapFrameStreamServer` output concerns outgoing queries and incoming responses (the resolver-facing perspective). Its separate `dnstapNODFrameStreamServer` path emits `CLIENT_QUERY` for newly observed domain notifications and `RESOLVER_RESPONSE` for unique-domain-response notifications; those are specialized notifications, not ordinary client-query/response pairs. The NOD/UDR notification uses `query_zone`. See [PowerDNS Recursor dnstap documentation](https://doc.powerdns.com/recursor/lua-config/protobuf.html).
+
 ## Input semantics
 
 | Typed property | .NET type | Official protobuf field |
@@ -72,6 +88,6 @@ await writer.WriteAsync(record);
 
 ## Deliberately excluded
 
-No string-parsing overload, `TryCreate`, reflection-based mapper, synthetic DNS packet generator, application-specific `extra` schema, or server-specific adapter is provided. Consumers needing other official fields (policy, HTTP protocol, query zone) may manipulate the generated protobuf record directly.
+No string-parsing overload, `TryCreate`, reflection-based mapper, synthetic DNS packet generator, application-specific `extra` schema, or server-specific adapter is provided. Consumers needing other official fields (policy, HTTP protocol, additional timestamps, or other schema metadata) may manipulate the generated protobuf record directly.
 
 See `src/Dnstap/Schema/dnstap.proto` for authoritative field semantics.

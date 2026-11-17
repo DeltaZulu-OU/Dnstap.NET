@@ -4,7 +4,11 @@ using Google.Protobuf;
 
 namespace Dnstap
 {
-    /// <summary>Maps native .NET DNS event metadata into the official dnstap protobuf model.</summary>
+    /// <summary>
+    /// Maps native .NET DNS event metadata into official dnstap protobuf records.
+    /// The caller selects the event type by observation perspective (AUTH, CLIENT, RESOLVER,
+    /// FORWARDER or UPDATE), rather than inferring it from DNS packet flags.
+    /// </summary>
     public sealed class DnstapRecordFactory
     {
         private readonly ByteString _identity;

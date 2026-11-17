@@ -2,6 +2,8 @@
 
 A .NET 10 dnstap writer based on the official [dnstap protobuf schema](https://github.com/dnstap/dnstap.pb) and Frame Streams framing.
 
+The writer's default limit is 98,304 bytes (96 KiB) of serialized dnstap DATA payload per record, excluding the Frame Streams length header; adjust `maxDataLength` explicitly when required. Choose `Message.Types.Type` by the observation point (AUTH, CLIENT, RESOLVER, FORWARDER or UPDATE); see the [event-role mapping](https://github.com/DeltaZulu-OU/Dnstap.NET/blob/main/docs/RECORD-CONSTRUCTION-EVALUATION.md#choosing-a-dnstap-event-type).
+
 The package provides `DnstapWriter`, typed `DnsLogEntry` and an immutable per-producer `DnstapRecordFactory`, plus generated protobuf record types. In 0.2.0, construct `new DnstapRecordFactory(identityBytes, versionBytes)` and invoke its instance `Create(entry)` method; the former static `DnstapRecordFactory.Create(entry)` is removed. Empty byte values omit the fields. The caller provides its own writable stream or connected duplex stream; connection management, reconnection, DNS parsing and delivery policies are outside the package.
 
 See [usage and lifecycle documentation](https://github.com/DeltaZulu-OU/Dnstap.NET#using-the-library) and the [protocol specification](https://github.com/DeltaZulu-OU/Dnstap.NET/blob/main/docs/FRAMESTREAMS-PROTOCOL.md).
