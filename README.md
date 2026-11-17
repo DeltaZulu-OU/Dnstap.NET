@@ -51,7 +51,7 @@ var record = factory.Create(new DnsLogEntry
 await writer.WriteAsync(record);
 ```
 
-`ClientAddress` means DNS message initiator (`query_address`); `ServerAddress` means responder (`response_address`). This mapping must not be confused with the machine observing the event. The example's IP parsing happens outside the library. Packet fields remain unset unless original binary packet bytes are provided. The factory copies optional producer `identity` and `version` bytes once and shares the immutable values across records; absent metadata is omitted. Construct one factory per producer and reuse it safely across concurrent events. See [record-construction rules](docs/RECORD-CONSTRUCTION-EVALUATION.md) for event types, validation and limitations.
+`ClientAddress` means DNS message initiator (`query_address`); `ServerAddress` means responder (`response_address`). This mapping must not be confused with the machine observing the event. The example's IP parsing happens outside the library. Packet fields remain unset unless original binary packet bytes are provided. Set `QueryTimestamp` and `ResponseTimestamp` on an entry to preserve both event instants; legacy `Timestamp` still populates the event-direction field but conflicts with an explicit value for that same field. The factory copies optional producer `identity` and `version` bytes once and shares the immutable values across records; absent metadata is omitted. Construct one factory per producer and reuse it safely across concurrent events. See [record-construction rules](docs/RECORD-CONSTRUCTION-EVALUATION.md) for event types, validation and limitations.
 
 For a connected, readable/writable TCP stream, use `new DnstapWriter(stream, DnstapStreamMode.Duplex)`. The writer handles READY/ACCEPT/START and STOP/FINISH, but the caller owns the socket, TLS, reconnection and delivery policy. `CompleteAsync()` reports finalization failures; disposing a healthy duplex writer without explicit completion also performs a bounded shutdown.
 
@@ -81,7 +81,7 @@ Tapper emits deterministic `example.com` DNS queries, with a distinct DNS transa
 - File: `dotnet run --project src/Tapper/Tapper.csproj -- file --output capture.fstrm --count 3`
 - TCP collector: `dotnet run --project src/Tapper/Tapper.csproj -- tcp --host 127.0.0.1 --port 6000 --count 3`
 
-Append `--no-complete` to exercise automatic graceful disposal instead of explicitly calling `CompleteAsync()`. A count of `0` emits an empty but complete Frame Streams session. Tapper exits nonzero on failure.
+Append `--no-complete` to exercise automatic graceful disposal instead of explicitly calling `CompleteAsync()`. A count of `0` emits an empty but complete Frame Streams session. Tapper exits nonzero on failure. For a self-contained dual-timestamp response fixture, append `--response-timestamps` in file mode; `--count 0 --response-timestamps` emits exactly one response. The CI checks both timestamps in the independent Go reader and BIND `dnstap-read`.
 
 ## Writer lifetime and performance
 

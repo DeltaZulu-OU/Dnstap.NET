@@ -148,6 +148,8 @@ jobs:
             sleep 0.1
           done
           jq -s -e 'length == 3 and all(.[]; .type == "MESSAGE" and .identity == "tapper" and .message.type == "CLIENT_QUERY" and .message.socket_protocol == "UDP" and .message.query_address == "192.0.2.10" and .message.response_port == 53 and (.message.query_message | contains("example.com.")))' "${{ runner.temp }}/socket.jsonl"
+      - name: FS-027 validate both response timestamps in independent Go reader
+        run: bash .github/interop/fstrm/check-response-timestamps.sh go "$RUNNER_TEMP/dnstap-tools/dnstap" "$(command -v dotnet)" "$RUNNER_TEMP/dual-timestamps"
       - name: Upload independent decode evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -158,6 +160,7 @@ jobs:
             ${{ runner.temp }}/tapper.jsonl
             ${{ runner.temp }}/socket.jsonl
             ${{ runner.temp }}/socket.stderr
+            ${{ runner.temp }}/dual-timestamps/
           if-no-files-found: warn
 
   dns-collector-interop:
@@ -338,6 +341,9 @@ jobs:
             knot-kdig) reader="$(command -v kdig)" ;;
           esac
           bash .github/interop/fstrm/run-file-reader.sh "${{ matrix.target }}" "$reader" "$RUNNER_TEMP/dnstap-tools/dnstap" "$(command -v dotnet)" "$RUNNER_TEMP/file-reader-evidence"
+      - name: FS-027 validate both timestamps in BIND dnstap-read
+        if: matrix.target == 'bind-dnstap-read'
+        run: bash .github/interop/fstrm/check-response-timestamps.sh bind "$BIND_DNSTAP_READ" "$(command -v dotnet)" "$RUNNER_TEMP/file-reader-evidence/dual-timestamps"
       - name: Upload FS-022 file reader evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

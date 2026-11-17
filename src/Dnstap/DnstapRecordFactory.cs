@@ -75,25 +75,40 @@ namespace Dnstap
                 message.SocketProtocol = transport;
             }
 
-            if (entry.Timestamp is { } timestamp)
+            var queryTimestamp = entry.QueryTimestamp;
+            var responseTimestamp = entry.ResponseTimestamp;
+            if (entry.Timestamp is { } shortcut)
             {
-                var seconds = timestamp.ToUnixTimeSeconds();
-                if (seconds < 0)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(DnsLogEntry.Timestamp), "Dnstap timestamps must not precede the Unix epoch.");
-                }
-
-                var nanoseconds = checked((uint)((timestamp.UtcTicks % TimeSpan.TicksPerSecond) * 100));
                 if (IsResponse(eventType))
                 {
-                    message.ResponseTimeSec = (ulong)seconds;
-                    message.ResponseTimeNsec = nanoseconds;
+                    if (responseTimestamp is not null)
+                    {
+                        throw new ArgumentException("Timestamp conflicts with ResponseTimestamp for a response event.", nameof(entry));
+                    }
+                    responseTimestamp = shortcut;
                 }
                 else
                 {
-                    message.QueryTimeSec = (ulong)seconds;
-                    message.QueryTimeNsec = nanoseconds;
+                    if (queryTimestamp is not null)
+                    {
+                        throw new ArgumentException("Timestamp conflicts with QueryTimestamp for a query event.", nameof(entry));
+                    }
+                    queryTimestamp = shortcut;
                 }
+            }
+
+            if (queryTimestamp is { } queryTime)
+            {
+                var (seconds, nanoseconds) = ConvertTimestamp(queryTime, nameof(DnsLogEntry.QueryTimestamp));
+                message.QueryTimeSec = seconds;
+                message.QueryTimeNsec = nanoseconds;
+            }
+
+            if (responseTimestamp is { } responseTime)
+            {
+                var (seconds, nanoseconds) = ConvertTimestamp(responseTime, nameof(DnsLogEntry.ResponseTimestamp));
+                message.ResponseTimeSec = seconds;
+                message.ResponseTimeNsec = nanoseconds;
             }
 
             if (!entry.QueryPacket.IsEmpty)
@@ -120,6 +135,16 @@ namespace Dnstap
                 record.Version = _version;
             }
             return record;
+        }
+
+        private static (ulong Seconds, uint Nanoseconds) ConvertTimestamp(DateTimeOffset timestamp, string property)
+        {
+            var seconds = timestamp.ToUnixTimeSeconds();
+            if (seconds < 0)
+            {
+                throw new ArgumentOutOfRangeException(property, "Dnstap timestamps must not precede the Unix epoch.");
+            }
+            return ((ulong)seconds, checked((uint)((timestamp.UtcTicks % TimeSpan.TicksPerSecond) * 100)));
         }
 
         private static bool IsResponse(Message.Types.Type type) =>

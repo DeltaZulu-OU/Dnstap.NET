@@ -31,6 +31,8 @@ var record = factory.Create(entry);
 | `ClientPort` | `ushort?` | `message.query_port` |
 | `ServerPort` | `ushort?` | `message.response_port` |
 | `Transport` | `SocketProtocol?` | `message.socket_protocol` |
+| `QueryTimestamp` | `DateTimeOffset?` | `message.query_time_*` |
+| `ResponseTimestamp` | `DateTimeOffset?` | `message.response_time_*` |
 | `Timestamp` | `DateTimeOffset?` | Event-direction `query_time_*` or `response_time_*` |
 | `QueryPacket` | `ReadOnlyMemory<byte>` | `message.query_message` |
 | `ResponsePacket` | `ReadOnlyMemory<byte>` | `message.response_message` |
@@ -39,7 +41,7 @@ The `ClientAddress` and `ServerAddress` names indicate message **initiator and r
 
 Scoped IPv6 addresses with nonzero `ScopeId` are rejected, because `GetAddressBytes()` cannot represent the interface scope in the official dnstap schema. The consumer must explicitly decide whether it is acceptable to discard a scope before constructing the entry. Optional null metadata remains absent in protobuf. Undefined event and transport enum values are rejected; numeric ports are range-limited by `ushort` at compile time. A nullable port set to zero is explicitly present, not omitted.
 
-`Timestamp` is captured once, converted to Unix epoch seconds and 100-nanosecond-resolution fractional nanoseconds, and assigned to query or response time according to `EventType`. Pre-epoch timestamps are rejected. An observation with both query and response instants should set the official generated protobuf model fields directly.
+`QueryTimestamp` and `ResponseTimestamp` independently map to the corresponding official protobuf fields at 100-nanosecond precision. The legacy `Timestamp` remains a shortcut for the event-direction field (query for query types, response for response types). Supplying `Timestamp` together with its matching explicit property is ambiguous and throws `ArgumentException`; it may coexist with the opposite-direction explicit timestamp. Pre-epoch timestamps are rejected in every property. The factory does not require the response instant to follow the query instant. Go's dnstap reader displays both values on a response record; BIND `dnstap-read -y` displays only the response-side timestamp and packet for `CLIENT_RESPONSE`, so BIND cannot independently verify the query timestamp in that output.
 
 Packet bytes are copied when supplied, not synthesized from QNAME/QTYPE/RCODE or other textual metadata. A metadata-only protobuf record is initialized and valid, but specific downstream consumers may need original packet bytes to decode DNS contents.
 
@@ -67,6 +69,6 @@ await writer.WriteAsync(record);
 
 ## Deliberately excluded
 
-No string-parsing overload, `TryCreate`, reflection-based mapper, synthetic DNS packet generator, application-specific `extra` schema, or server-specific adapter is provided. Consumers needing other official fields (policy, HTTP protocol, query zone, separate query/response timestamps) may manipulate the generated protobuf record directly.
+No string-parsing overload, `TryCreate`, reflection-based mapper, synthetic DNS packet generator, application-specific `extra` schema, or server-specific adapter is provided. Consumers needing other official fields (policy, HTTP protocol, query zone) may manipulate the generated protobuf record directly.
 
 See `src/Dnstap/Schema/dnstap.proto` for authoritative field semantics.

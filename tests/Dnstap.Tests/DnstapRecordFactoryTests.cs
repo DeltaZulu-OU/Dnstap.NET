@@ -263,5 +263,79 @@ namespace Dnstap.Tests
                 Assert.AreSame(records[0].Version, record.Version);
             }
         }
+
+        [TestMethod]
+        public void FS027_DualTimestampsPreserveBothInstantsAndNanosecondPrecision()
+        {
+            var queryTime = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000).AddTicks(1_234_567);
+            var responseTime = DateTimeOffset.FromUnixTimeSeconds(1_700_000_001).AddTicks(2_345_678);
+            var message = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientResponse,
+                QueryTimestamp = queryTime,
+                ResponseTimestamp = responseTime
+            }).Message;
+            Assert.AreEqual(1_700_000_000ul, message.QueryTimeSec);
+            Assert.AreEqual(123_456_700u, message.QueryTimeNsec);
+            Assert.AreEqual(1_700_000_001ul, message.ResponseTimeSec);
+            Assert.AreEqual(234_567_800u, message.ResponseTimeNsec);
+        }
+
+        [TestMethod]
+        public void FS027_LegacyTimestampMapsByEventAndCanCoexistWithOtherInstant()
+        {
+            var queryTime = DateTimeOffset.FromUnixTimeSeconds(100);
+            var responseTime = DateTimeOffset.FromUnixTimeSeconds(90);
+            var response = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientResponse,
+                Timestamp = responseTime,
+                QueryTimestamp = queryTime
+            }).Message;
+            Assert.AreEqual(100ul, response.QueryTimeSec);
+            Assert.AreEqual(90ul, response.ResponseTimeSec);
+            var query = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery,
+                Timestamp = queryTime,
+                ResponseTimestamp = responseTime
+            }).Message;
+            Assert.AreEqual(100ul, query.QueryTimeSec);
+            Assert.AreEqual(90ul, query.ResponseTimeSec);
+        }
+
+        [TestMethod]
+        public void FS027_RejectsConflictingMappedTimestamps()
+        {
+            var time = DateTimeOffset.UnixEpoch;
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery,
+                Timestamp = time,
+                QueryTimestamp = time
+            }));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientResponse,
+                Timestamp = time,
+                ResponseTimestamp = time
+            }));
+        }
+
+        [TestMethod]
+        public void FS027_RejectsPreEpochExplicitInstants()
+        {
+            var invalid = DateTimeOffset.UnixEpoch.AddTicks(-1);
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery,
+                QueryTimestamp = invalid
+            }));
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientResponse,
+                ResponseTimestamp = invalid
+            }));
+        }
     }
 }

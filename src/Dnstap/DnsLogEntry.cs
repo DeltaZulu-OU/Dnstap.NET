@@ -25,9 +25,15 @@ namespace Dnstap
 
         /// <summary>
         /// The observed query or response instant, mapped according to EventType.
-        /// Distinct query/response timestamps may be set directly on the protobuf model.
+        /// Use QueryTimestamp and ResponseTimestamp to supply both instants; do not combine Timestamp with its matching explicit instant.
         /// </summary>
         public DateTimeOffset? Timestamp { get; init; }
+
+        /// <summary>Explicit query time, independently settable for both query and response events.</summary>
+        public DateTimeOffset? QueryTimestamp { get; init; }
+
+        /// <summary>Explicit response time, independently settable for both query and response events.</summary>
+        public DateTimeOffset? ResponseTimestamp { get; init; }
 
         /// <summary>Original wire-format DNS query packet, if available.</summary>
         public ReadOnlyMemory<byte> QueryPacket { get; init; }

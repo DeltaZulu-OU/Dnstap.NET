@@ -9,13 +9,18 @@ try
 {
     if (args.Length == 0 || (args[0] != "file" && args[0] != "tcp" && args[0] != "unix"))
     {
-        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N [--no-complete] | Tapper tcp --host HOST --port PORT --count N [--no-complete] | Tapper unix --path SOCKET --count N [--no-complete]");
+        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N [--response-timestamps] [--no-complete] | Tapper tcp --host HOST --port PORT --count N [--no-complete] | Tapper unix --path SOCKET --count N [--no-complete]");
         return 2;
     }
 
     var mode = args[0];
     var noComplete = args.Contains("--no-complete", StringComparer.Ordinal);
-    var expectedArgs = (mode == "tcp" ? 7 : 5) + (noComplete ? 1 : 0);
+    var responseTimestamps = args.Contains("--response-timestamps", StringComparer.Ordinal);
+    var expectedArgs = (mode == "tcp" ? 7 : 5) + (noComplete ? 1 : 0) + (responseTimestamps ? 1 : 0);
+    if (responseTimestamps && mode != "file")
+    {
+        throw new ArgumentException("--response-timestamps is supported only in file mode.");
+    }
     if (args.Length != expectedArgs ||
         !int.TryParse(GetOption(args, "--count"), out var count) || count < 0)
     {
@@ -26,7 +31,7 @@ try
     if (mode == "file")
     {
         await using var output = new FileStream(GetOption(args, "--output"), FileMode.Create, FileAccess.Write);
-        await EmitAsync(output, DnstapStreamMode.File, count, noComplete, deadline.Token);
+        await EmitAsync(output, DnstapStreamMode.File, count, noComplete, responseTimestamps, deadline.Token);
     }
     else if (mode == "unix")
     {
@@ -34,7 +39,7 @@ try
         using var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         await client.ConnectAsync(new UnixDomainSocketEndPoint(path), deadline.Token);
         await using var output = new NetworkStream(client, ownsSocket: false);
-        await EmitAsync(output, DnstapStreamMode.Duplex, count, noComplete, deadline.Token);
+        await EmitAsync(output, DnstapStreamMode.Duplex, count, noComplete, responseTimestamps, deadline.Token);
     }
     else
     {
@@ -46,10 +51,10 @@ try
 
         using var client = new TcpClient();
         await client.ConnectAsync(host, port, deadline.Token);
-        await EmitAsync(client.GetStream(), DnstapStreamMode.Duplex, count, noComplete, deadline.Token);
+        await EmitAsync(client.GetStream(), DnstapStreamMode.Duplex, count, noComplete, responseTimestamps, deadline.Token);
     }
 
-    Console.WriteLine($"Wrote {count} dnstap records.");
+    Console.WriteLine($"Wrote {count + (responseTimestamps ? 1 : 0)} dnstap records.");
     return 0;
 }
 catch (Exception error)
@@ -71,7 +76,7 @@ static string GetOption(string[] arguments, string option)
     throw new ArgumentException($"Missing {option}.");
 }
 
-static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, bool noComplete, CancellationToken cancellationToken)
+static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, bool noComplete, bool responseTimestamps, CancellationToken cancellationToken)
 {
     var factory = new DnstapRecordFactory(Encoding.UTF8.GetBytes("tapper"));
     await using var writer = new DnstapWriter(output, mode);
@@ -79,6 +84,25 @@ static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, boo
     for (var i = 0; i < count; i++)
     {
         await writer.WriteAsync(CreateEvent(i, factory), cancellationToken);
+    }
+
+    if (responseTimestamps)
+    {
+        var query = Convert.FromHexString("000101000001000000000000076578616D706C6503636F6D0000010001");
+        var response = Convert.FromHexString("000181800001000000000000076578616D706C6503636F6D0000010001");
+        await writer.WriteAsync(factory.Create(new DnsLogEntry
+        {
+            EventType = Message.Types.Type.ClientResponse,
+            ClientAddress = IPAddress.Parse("192.0.2.10"),
+            ServerAddress = IPAddress.Parse("192.0.2.53"),
+            ClientPort = 53000,
+            ServerPort = 53,
+            Transport = SocketProtocol.Udp,
+            QueryTimestamp = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000).AddTicks(1_234_567),
+            ResponseTimestamp = DateTimeOffset.FromUnixTimeSeconds(1_700_000_001).AddTicks(2_345_678),
+            QueryPacket = query,
+            ResponsePacket = response
+        }), cancellationToken);
     }
 
     if (!noComplete)
