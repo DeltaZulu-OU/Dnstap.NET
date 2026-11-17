@@ -75,6 +75,8 @@ Run `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release` for unit tes
 
 To reproduce FS-021 locally, first build Tapper in Release, then run `bash .github/interop/fstrm/run-target.sh tcp-explicit /absolute/path/to/fstrm_capture /absolute/path/to/dnstap /absolute/path/to/dotnet /absolute/evidence/directory`. Use `tcp-no-complete` to check disposal-driven completion. The capture tool must be built from libfstrm tag `v0.6.1` at commit `1d6e11d750dfa8d15419814dfe0aa86d80000741`; the Go dnstap reader is pinned to `ebb538e7d351a58861a8f348491828214a1d8db2`. The script validates receiver CLI flags, exact decoded records, distinct DNS IDs, and a negative control. No root privileges are required.
 
+FS-022 additionally reads Tapper file captures with pinned libfstrm `fstrm_dump`, BIND `dnstap-read -y`, and Knot `kdig -G`, on Ubuntu 24.04. The file-reader matrix records their exact package versions and observed behavior on truncated files. It compares every field exposed by the reader, with the full Go record assertions still required for every target.
+
 The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c). [Frame Streams protocol and implementation rules](docs/FRAMESTREAMS-PROTOCOL.md).
 
 ## License

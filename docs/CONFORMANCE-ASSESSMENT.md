@@ -14,6 +14,7 @@ Baseline: sender-only .NET 10 Dnstap.NET. Normative protocol behavior is checked
 | Unknown control type after file START | FS-009 test-only oracle | Covered for oracle; not shipped as a reader |
 | Timeout, cancellation and faulted shutdown | FS-015/016, virtual-time and failure-matrix tests | Covered; additional late noncooperative FINISH-read regression added |
 | FS-021 libfstrm TCP receiver interoperability | v0.6.1 at pinned commit, explicit and implicit Tapper completion, Go reader, negative control and per-target evidence | CI external interop matrix; pending verified runs |
+| FS-022 independent file readers | libfstrm dump, BIND YAML, and Knot DNS output; truncated-file observations; pinned Ubuntu 24.04 packages and versions | CI file-reader interop matrix; pending verified runs |
 | Peer sends premature FINISH during active DATA | No background read loop | **Known sender limitation**; not detectable without adding asynchronous duplex receive functionality |
 | File reader strict trailing data and EOF | FS-011 test oracle | Covered in tests; no public receiving API |
 

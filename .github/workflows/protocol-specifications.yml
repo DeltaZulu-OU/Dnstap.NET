@@ -257,3 +257,88 @@ jobs:
           path: ${{ runner.temp }}/fstrm-evidence/
           if-no-files-found: error
           retention-days: 90
+
+  fs022-file-reader-interop:
+    name: FS-022 file reader (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fstrm-dump, bind-dnstap-read, knot-kdig]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact .NET SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Set up pinned Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: '1.25.6'
+      - name: Install BIND and Knot prerequisites from Ubuntu 24.04
+        if: matrix.target != 'fstrm-dump'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bind9-dnsutils knot-dnsutils python3-yaml
+      - name: Install libfstrm build prerequisites
+        if: matrix.target == 'fstrm-dump'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends autoconf automake libtool pkg-config libevent-dev build-essential
+      - name: Build libfstrm v0.6.1 at exact commit
+        if: matrix.target == 'fstrm-dump'
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly FSTRM_SHA=1d6e11d750dfa8d15419814dfe0aa86d80000741
+          git clone --depth 1 --branch v0.6.1 https://github.com/farsightsec/fstrm.git "$RUNNER_TEMP/fstrm-src"
+          test "$(git -C "$RUNNER_TEMP/fstrm-src" rev-parse HEAD)" = "$FSTRM_SHA"
+          cd "$RUNNER_TEMP/fstrm-src"
+          ./autogen.sh
+          ./configure --prefix="$RUNNER_TEMP/fstrm-install"
+          make -j"$(nproc)"
+          make check
+          make install
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/fstrm-install/lib" >> "$GITHUB_ENV"
+      - name: Build BIND 9.18.39 dnstap-read from pinned source
+        if: matrix.target == 'bind-dnstap-read'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends autoconf automake libtool pkg-config make gcc g++ libuv1-dev libssl-dev libprotobuf-c-dev protobuf-c-compiler libfstrm-dev
+          readonly BIND_REF=v9.18.39
+          readonly BIND_SHA=737584125e6b078481e176e814970f560e115f1a
+          git clone --depth 1 --branch "$BIND_REF" https://github.com/isc-projects/bind9.git "$RUNNER_TEMP/bind9"
+          test "$(git -C "$RUNNER_TEMP/bind9" rev-parse HEAD)" = "$BIND_SHA"
+          cd "$RUNNER_TEMP/bind9"
+          autoreconf -fi
+          ./configure --enable-dnstap --disable-doh --without-lmdb --without-json-c --without-libxml2 --without-gssapi --disable-linux-caps
+          make -j"$(nproc)" -C lib
+          make -j"$(nproc)" -C bin/tools dnstap-read
+          test -x bin/tools/dnstap-read
+          echo "BIND_DNSTAP_READ=$RUNNER_TEMP/bind9/bin/tools/dnstap-read" >> "$GITHUB_ENV"
+      - name: Build Tapper from locked dependencies
+        run: dotnet restore src/Tapper/Tapper.csproj --locked-mode && dotnet build src/Tapper/Tapper.csproj -c Release --no-restore
+      - name: Install pinned independent Go dnstap reader
+        run: GOBIN="$RUNNER_TEMP/dnstap-tools" go install github.com/dnstap/golang-dnstap/dnstap@ebb538e7d351a58861a8f348491828214a1d8db2
+      - name: FS-022 verify reader and record truncated-file behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            fstrm-dump) reader="$RUNNER_TEMP/fstrm-install/bin/fstrm_dump" ;;
+            bind-dnstap-read) reader="$BIND_DNSTAP_READ" ;;
+            knot-kdig) reader="$(command -v kdig)" ;;
+          esac
+          bash .github/interop/fstrm/run-file-reader.sh "${{ matrix.target }}" "$reader" "$RUNNER_TEMP/dnstap-tools/dnstap" "$(command -v dotnet)" "$RUNNER_TEMP/file-reader-evidence"
+      - name: Upload FS-022 file reader evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: file-reader-${{ matrix.target }}-evidence
+          path: ${{ runner.temp }}/file-reader-evidence/
+          if-no-files-found: error
+          retention-days: 90
