@@ -21,6 +21,7 @@ Baseline: sender-only .NET 10 Dnstap.NET. Normative protocol behavior is checked
 | FS-026 public flush | MSTest checks file/duplex no-frame flush, state and disposal errors, lock-wait cancellation, duplex deadline, and failed or canceled flush | Sender API |
 | 0.2.0 immutable producer metadata factory | Instance factory copies raw identity/version once, leaves empty values omitted, and supports concurrent event creation; Tapper and package consumer exercise it | Unit, consumer and interop CI |
 | FS-027 separate query/response instants | Factory unit tests for dual instants, precision, conflicts, pre-epoch times, and unordered times; independently decode both Tapper timestamps in Go and response-side fields in BIND (BIND's YAML omits query-side fields on CLIENT_RESPONSE) | MSTest and external interop |
+| FS-028 query zone | MSTest validates wire-format name lengths, termination, pointers, text rejection and raw-byte fidelity; external Go and BIND decode checks | Factory / external interop |
 | Peer sends premature FINISH during active DATA | No background read loop | **Known sender limitation**; not detectable without adding asynchronous duplex receive functionality |
 | File reader strict trailing data and EOF | FS-011 test oracle | Covered in tests; no public receiving API |
 

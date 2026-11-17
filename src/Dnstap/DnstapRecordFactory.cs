@@ -111,6 +111,12 @@ namespace Dnstap
                 message.ResponseTimeNsec = nanoseconds;
             }
 
+            if (!entry.QueryZone.IsEmpty)
+            {
+                ValidateQueryZone(entry.QueryZone.Span);
+                message.QueryZone = ByteString.CopyFrom(entry.QueryZone.Span);
+            }
+
             if (!entry.QueryPacket.IsEmpty)
             {
                 message.QueryMessage = ByteString.CopyFrom(entry.QueryPacket.Span);
@@ -135,6 +141,43 @@ namespace Dnstap
                 record.Version = _version;
             }
             return record;
+        }
+
+        private static void ValidateQueryZone(ReadOnlySpan<byte> zone)
+        {
+            if (zone.Length > 255)
+            {
+                throw new ArgumentException("A DNS wire-format name cannot exceed 255 bytes.", nameof(DnsLogEntry.QueryZone));
+            }
+
+            var position = 0;
+            while (position < zone.Length)
+            {
+                var length = zone[position++];
+                // The top two bits distinguish ordinary labels from compression pointers
+                // and reserved extended-label encodings.
+                if (length > 63)
+                {
+                    throw new ArgumentException("Compressed or reserved DNS labels are not supported.", nameof(DnsLogEntry.QueryZone));
+                }
+
+                if (length == 0)
+                {
+                    if (position != zone.Length)
+                    {
+                        throw new ArgumentException("DNS query zone must end at the root label.", nameof(DnsLogEntry.QueryZone));
+                    }
+                    return;
+                }
+
+                if (length > zone.Length - position)
+                {
+                    throw new ArgumentException("DNS query zone label exceeds available bytes.", nameof(DnsLogEntry.QueryZone));
+                }
+                position += length;
+            }
+
+            throw new ArgumentException("DNS query zone must end with a zero-length root label.", nameof(DnsLogEntry.QueryZone));
         }
 
         private static (ulong Seconds, uint Nanoseconds) ConvertTimestamp(DateTimeOffset timestamp, string property)

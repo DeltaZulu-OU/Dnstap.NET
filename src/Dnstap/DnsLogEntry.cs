@@ -35,6 +35,9 @@ namespace Dnstap
         /// <summary>Explicit response time, independently settable for both query and response events.</summary>
         public DateTimeOffset? ResponseTimestamp { get; init; }
 
+        /// <summary>Optional uncompressed, root-terminated DNS wire-format query zone; no text parsing.</summary>
+        public ReadOnlyMemory<byte> QueryZone { get; init; }
+
         /// <summary>Original wire-format DNS query packet, if available.</summary>
         public ReadOnlyMemory<byte> QueryPacket { get; init; }
 

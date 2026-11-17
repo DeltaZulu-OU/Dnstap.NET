@@ -337,5 +337,74 @@ namespace Dnstap.Tests
                 ResponseTimestamp = invalid
             }));
         }
+
+        [TestMethod]
+        public void FS028_QueryZonePreservesRawWireBytesIncludingRootAndBinaryLabel()
+        {
+            byte[] zone = [3, (byte)'w', 0, (byte)'x', 0];
+            var result = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.AuthQuery,
+                QueryZone = zone
+            });
+            zone[1] = 0xff;
+            Assert.AreSequenceEqual(new byte[] { 3, (byte)'w', 0, (byte)'x', 0 },
+                result.Message.QueryZone.ToByteArray());
+            var root = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.AuthQuery,
+                QueryZone = new byte[] { 0 }
+            });
+            Assert.AreSequenceEqual(new byte[] { 0 }, root.Message.QueryZone.ToByteArray());
+        }
+
+        [TestMethod]
+        public void FS028_QueryZoneAcceptsMaxLengthUncompressedName()
+        {
+            byte[] zone = [63, .. new byte[63], 63, .. new byte[63],
+                63, .. new byte[63], 61, .. new byte[61], 0];
+            Assert.AreEqual(255, zone.Length);
+            var record = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery,
+                QueryZone = zone
+            });
+            Assert.AreEqual(255, record.Message.QueryZone.Length);
+        }
+
+        [TestMethod]
+        public void FS028_QueryZoneRejectsInvalidWireNamesAndText()
+        {
+            byte[][] invalid =
+            [
+                [(byte)'e', (byte)'x', (byte)'a', (byte)'m', (byte)'p', (byte)'l', (byte)'e'],
+                [3, (byte)'f', (byte)'o', (byte)'o'],
+                [0, 1, (byte)'x', 0],
+                [0xc0, 0x00],
+                [0x40, 0],
+                [0x80, 0],
+                [64, .. new byte[64], 0],
+                [63, .. new byte[63], 63, .. new byte[63], 63, .. new byte[63],
+                    62, .. new byte[62], 0]
+            ];
+            foreach (var zone in invalid)
+            {
+                _ = Assert.ThrowsExactly<ArgumentException>(() => new DnstapRecordFactory().Create(new DnsLogEntry
+                {
+                    EventType = Message.Types.Type.ClientQuery,
+                    QueryZone = zone
+                }));
+            }
+        }
+
+        [TestMethod]
+        public void FS028_EmptyQueryZoneOmitsProtobufField()
+        {
+            var record = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery
+            });
+            Assert.IsFalse(record.Message.HasQueryZone);
+        }
     }
 }

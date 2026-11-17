@@ -35,6 +35,7 @@ var record = factory.Create(entry);
 | `ResponseTimestamp` | `DateTimeOffset?` | `message.response_time_*` |
 | `Timestamp` | `DateTimeOffset?` | Event-direction `query_time_*` or `response_time_*` |
 | `QueryPacket` | `ReadOnlyMemory<byte>` | `message.query_message` |
+| `QueryZone` | `ReadOnlyMemory<byte>` | `message.query_zone` (uncompressed DNS wire-format name) |
 | `ResponsePacket` | `ReadOnlyMemory<byte>` | `message.response_message` |
 
 The `ClientAddress` and `ServerAddress` names indicate message **initiator and responder**, not necessarily the process running the DNS server. `EventType` distinguishes query/response direction and observer perspective; it cannot be inferred solely from DNS packet flags. For consistency, both provided IP addresses must use the same address family. IPv4-mapped IPv6 addresses remain IPv6 unless the caller explicitly normalizes them; mixed mapped-IPv6/IPv4 values are rejected.
@@ -42,6 +43,8 @@ The `ClientAddress` and `ServerAddress` names indicate message **initiator and r
 Scoped IPv6 addresses with nonzero `ScopeId` are rejected, because `GetAddressBytes()` cannot represent the interface scope in the official dnstap schema. The consumer must explicitly decide whether it is acceptable to discard a scope before constructing the entry. Optional null metadata remains absent in protobuf. Undefined event and transport enum values are rejected; numeric ports are range-limited by `ushort` at compile time. A nullable port set to zero is explicitly present, not omitted.
 
 `QueryTimestamp` and `ResponseTimestamp` independently map to the corresponding official protobuf fields at 100-nanosecond precision. The legacy `Timestamp` remains a shortcut for the event-direction field (query for query types, response for response types). Supplying `Timestamp` together with its matching explicit property is ambiguous and throws `ArgumentException`; it may coexist with the opposite-direction explicit timestamp. Pre-epoch timestamps are rejected in every property. The factory does not require the response instant to follow the query instant. Go's dnstap reader displays both values on a response record; BIND `dnstap-read -y` displays only the response-side timestamp and packet for `CLIENT_RESPONSE`, so BIND cannot independently verify the query timestamp in that output.
+
+`QueryZone` accepts a complete uncompressed DNS wire-format name, including its terminating zero-length root label. Individual labels are at most 63 octets, and the complete name at most 255 octets. Compression pointers and reserved label encodings are rejected, as are missing roots and trailing bytes. The factory never parses or encodes textual domain names. An empty value omits the field; a single zero byte represents the DNS root. Nonempty bytes are copied.
 
 Packet bytes are copied when supplied, not synthesized from QNAME/QTYPE/RCODE or other textual metadata. A metadata-only protobuf record is initialized and valid, but specific downstream consumers may need original packet bytes to decode DNS contents.
 

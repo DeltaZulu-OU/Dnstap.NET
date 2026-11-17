@@ -9,17 +9,18 @@ try
 {
     if (args.Length == 0 || (args[0] != "file" && args[0] != "tcp" && args[0] != "unix"))
     {
-        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N [--response-timestamps] [--no-complete] | Tapper tcp --host HOST --port PORT --count N [--no-complete] | Tapper unix --path SOCKET --count N [--no-complete]");
+        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N [--response-timestamps|--query-zone] [--no-complete] | Tapper tcp --host HOST --port PORT --count N [--no-complete] | Tapper unix --path SOCKET --count N [--no-complete]");
         return 2;
     }
 
     var mode = args[0];
     var noComplete = args.Contains("--no-complete", StringComparer.Ordinal);
     var responseTimestamps = args.Contains("--response-timestamps", StringComparer.Ordinal);
-    var expectedArgs = (mode == "tcp" ? 7 : 5) + (noComplete ? 1 : 0) + (responseTimestamps ? 1 : 0);
-    if (responseTimestamps && mode != "file")
+    var queryZone = args.Contains("--query-zone", StringComparer.Ordinal);
+    var expectedArgs = (mode == "tcp" ? 7 : 5) + (noComplete ? 1 : 0) + (responseTimestamps ? 1 : 0) + (queryZone ? 1 : 0);
+    if ((responseTimestamps || queryZone) && mode != "file")
     {
-        throw new ArgumentException("--response-timestamps is supported only in file mode.");
+        throw new ArgumentException("--response-timestamps and --query-zone are supported only in file mode.");
     }
     if (args.Length != expectedArgs ||
         !int.TryParse(GetOption(args, "--count"), out var count) || count < 0)
@@ -27,11 +28,16 @@ try
         throw new ArgumentException("Invalid arguments or count.");
     }
 
+    if (queryZone && responseTimestamps)
+    {
+        throw new ArgumentException("Choose one specialized file fixture.");
+    }
+
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     if (mode == "file")
     {
         await using var output = new FileStream(GetOption(args, "--output"), FileMode.Create, FileAccess.Write);
-        await EmitAsync(output, DnstapStreamMode.File, count, noComplete, responseTimestamps, deadline.Token);
+        await EmitAsync(output, DnstapStreamMode.File, count, noComplete, responseTimestamps, queryZone, deadline.Token);
     }
     else if (mode == "unix")
     {
@@ -39,7 +45,7 @@ try
         using var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         await client.ConnectAsync(new UnixDomainSocketEndPoint(path), deadline.Token);
         await using var output = new NetworkStream(client, ownsSocket: false);
-        await EmitAsync(output, DnstapStreamMode.Duplex, count, noComplete, responseTimestamps, deadline.Token);
+        await EmitAsync(output, DnstapStreamMode.Duplex, count, noComplete, responseTimestamps, queryZone, deadline.Token);
     }
     else
     {
@@ -51,7 +57,7 @@ try
 
         using var client = new TcpClient();
         await client.ConnectAsync(host, port, deadline.Token);
-        await EmitAsync(client.GetStream(), DnstapStreamMode.Duplex, count, noComplete, responseTimestamps, deadline.Token);
+        await EmitAsync(client.GetStream(), DnstapStreamMode.Duplex, count, noComplete, responseTimestamps, queryZone, deadline.Token);
     }
 
     Console.WriteLine($"Wrote {count + (responseTimestamps ? 1 : 0)} dnstap records.");
@@ -76,14 +82,14 @@ static string GetOption(string[] arguments, string option)
     throw new ArgumentException($"Missing {option}.");
 }
 
-static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, bool noComplete, bool responseTimestamps, CancellationToken cancellationToken)
+static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, bool noComplete, bool responseTimestamps, bool queryZone, CancellationToken cancellationToken)
 {
     var factory = new DnstapRecordFactory(Encoding.UTF8.GetBytes("tapper"));
     await using var writer = new DnstapWriter(output, mode);
     await writer.StartAsync(cancellationToken);
     for (var i = 0; i < count; i++)
     {
-        await writer.WriteAsync(CreateEvent(i, factory), cancellationToken);
+        await writer.WriteAsync(CreateEvent(i, factory, queryZone && i == 0), cancellationToken);
     }
 
     if (responseTimestamps)
@@ -111,7 +117,7 @@ static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, boo
     }
 }
 
-static Dnstap.Dnstap CreateEvent(int index, DnstapRecordFactory factory)
+static Dnstap.Dnstap CreateEvent(int index, DnstapRecordFactory factory, bool withQueryZone)
 {
     var query = Convert.FromHexString("000101000001000000000000076578616D706C6503636F6D0000010001");
     BinaryPrimitives.WriteUInt16BigEndian(query, (ushort)index);
@@ -124,6 +130,11 @@ static Dnstap.Dnstap CreateEvent(int index, DnstapRecordFactory factory)
         ServerPort = 53,
         Transport = SocketProtocol.Udp,
         Timestamp = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000).AddTicks(index),
-        QueryPacket = query
+        QueryPacket = query,
+        QueryZone = withQueryZone ? new byte[]
+        {
+            7, (byte)'e', (byte)'x', (byte)'a', (byte)'m', (byte)'p', (byte)'l', (byte)'e',
+            3, (byte)'c', (byte)'o', (byte)'m', 0
+        } : ReadOnlyMemory<byte>.Empty
     });
 }
