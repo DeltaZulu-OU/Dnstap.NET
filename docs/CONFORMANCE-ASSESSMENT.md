@@ -16,6 +16,7 @@ Baseline: sender-only .NET 10 Dnstap.NET. Normative protocol behavior is checked
 | FS-021 libfstrm TCP receiver interoperability | v0.6.1 at pinned commit, explicit and implicit Tapper completion, Go reader, negative control and per-target evidence | CI external interop matrix; pending verified runs |
 | FS-023 Unix-domain socket capture | Tapper Unix mode, explicit and disposal completion against pinned libfstrm capture and Go decode | CI external interop matrix; pending verified runs |
 | FS-022 independent file readers | libfstrm dump, BIND YAML, and Knot DNS output; truncated-file observations; pinned Ubuntu 24.04 packages and versions | CI file-reader interop matrix; pending verified runs |
+| FS-024 Unbound receiver interoperability | Unbound 1.26.2 pinned release tarball, TCP and Unix socket, explicit and implicit completion, decoded record and identity checks | CI external interop matrix; pending verified runs |
 | Peer sends premature FINISH during active DATA | No background read loop | **Known sender limitation**; not detectable without adding asynchronous duplex receive functionality |
 | File reader strict trailing data and EOF | FS-011 test oracle | Covered in tests; no public receiving API |
 

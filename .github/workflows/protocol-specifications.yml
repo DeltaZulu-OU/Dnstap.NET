@@ -346,3 +346,67 @@ jobs:
           path: ${{ runner.temp }}/file-reader-evidence/
           if-no-files-found: error
           retention-days: 90
+
+  fs024-unbound-interop:
+    name: FS-024 Unbound receiver (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: tcp-explicit
+            port: 16071
+          - target: tcp-no-complete
+            port: 16072
+          - target: unix-explicit
+            port: 0
+          - target: unix-no-complete
+            port: 0
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact .NET SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Install Unbound build prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libssl-dev libexpat1-dev libevent-dev libprotobuf-c-dev protobuf-c-compiler libfstrm-dev
+      - name: Build SHA-256-pinned Unbound 1.26.2 dnstap receiver
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=1.26.2
+          sha256=d8ee7aa6bbb3ff1be7d9e57637d0d0ec2f18273a8efff1a0afe2c665858b96f7
+          archive="$RUNNER_TEMP/unbound-$version.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" "https://nlnetlabs.nl/downloads/unbound/unbound-$version.tar.gz"
+          echo "$sha256  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/unbound-$version"
+          ./configure --enable-dnstap --without-pyunbound --without-pythonmodule
+          make -j"$(nproc)" unbound-dnstap-socket
+          test -x unbound-dnstap-socket
+          ./unbound-dnstap-socket -h > "$RUNNER_TEMP/unbound-help.txt" 2>&1 || test "$?" -eq 1
+          grep -q -- '-s <serverip' "$RUNNER_TEMP/unbound-help.txt"
+          grep -q -- '-u <socketpath' "$RUNNER_TEMP/unbound-help.txt"
+          echo "UNBOUND_DNSTAP_SOCKET=$RUNNER_TEMP/unbound-$version/unbound-dnstap-socket" >> "$GITHUB_ENV"
+          printf '%s\n' "$version" "$sha256" > "$RUNNER_TEMP/unbound-source.txt"
+      - name: Build Tapper from locked dependencies
+        run: dotnet restore src/Tapper/Tapper.csproj --locked-mode && dotnet build src/Tapper/Tapper.csproj -c Release --no-restore
+      - name: FS-024 validate Unbound receiver
+        shell: bash
+        run: bash .github/interop/unbound/run-target.sh "${{ matrix.target }}" "$UNBOUND_DNSTAP_SOCKET" "$(command -v dotnet)" "$RUNNER_TEMP/unbound-evidence" "${{ matrix.port }}"
+      - name: Upload Unbound interoperability evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unbound-${{ matrix.target }}-evidence
+          path: |
+            ${{ runner.temp }}/unbound-evidence/
+            ${{ runner.temp }}/unbound-source.txt
+            ${{ runner.temp }}/unbound-help.txt
+          if-no-files-found: warn
+          retention-days: 90

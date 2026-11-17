@@ -81,6 +81,8 @@ FS-022 additionally reads Tapper file captures with pinned libfstrm `fstrm_dump`
 
 The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c). [Frame Streams protocol and implementation rules](docs/FRAMESTREAMS-PROTOCOL.md).
 
+FS-024 independently checks Tapper TCP and Unix duplex streams against Unbound 1.26.2 `unbound-dnstap-socket`. CI pins the source tarball SHA-256 and retains receiver output and decoded-record evidence for both completion modes. TLS interop is deferred; socket connectivity and stream lifecycle are owned by the caller.
+
 ## License
 
 [GNU General Public License version 3 only (GPL-3.0-only)](LICENSE).
