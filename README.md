@@ -4,7 +4,7 @@ A small .NET 10 library for writing [dnstap](https://dnstap.info/) DNS telemetry
 
 - `src/Dnstap/`: reusable library, generated `dnstap.proto` types, and the public `DnstapWriter`.
 - `src/Tapper/`: command-line test emitter that uses the library's public API.
-- `tests/`: MSTest unit tests. CI also checks Tapper against independent Go dnstap tooling and DNS-collector.
+- `tests/`: MSTest unit tests. CI also checks Tapper against independent Go dnstap tooling, DNS-collector, and libfstrm v0.6.1 receivers.
 
 ## Using the library
 
@@ -71,7 +71,9 @@ The caller retains ownership of supplied streams by default (`leaveOpen: true`).
 
 ## Build and verification
 
-Run `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release` for unit tests. GitHub Actions additionally validates Tapper file and TCP output against the pinned Go dnstap reader and **DNS-collector v3.3.7**; collector acceptance alone is not proof of strict protocol compliance.
+Run `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release` for unit tests. GitHub Actions additionally validates Tapper file and TCP output against the pinned Go dnstap reader, **DNS-collector v3.3.7**, and **libfstrm v0.6.1**. The libfstrm TCP matrix exercises both explicit completion and disposal-driven completion; the pinned Go reader independently validates its finished captures. Receiver acceptance alone is not proof of strict protocol compliance.
+
+To reproduce FS-021 locally, first build Tapper in Release, then run `bash .github/interop/fstrm/run-target.sh tcp-explicit /absolute/path/to/fstrm_capture /absolute/path/to/dnstap /absolute/path/to/dotnet /absolute/evidence/directory`. Use `tcp-no-complete` to check disposal-driven completion. The capture tool must be built from libfstrm tag `v0.6.1` at commit `1d6e11d750dfa8d15419814dfe0aa86d80000741`; the Go dnstap reader is pinned to `ebb538e7d351a58861a8f348491828214a1d8db2`. The script validates receiver CLI flags, exact decoded records, distinct DNS IDs, and a negative control. No root privileges are required.
 
 The vendored schema is pinned to [dnstap.pb commit 687347e](https://github.com/dnstap/dnstap.pb/commit/687347e16beebce5e075ff654871584597b2341c). [Frame Streams protocol and implementation rules](docs/FRAMESTREAMS-PROTOCOL.md).
 

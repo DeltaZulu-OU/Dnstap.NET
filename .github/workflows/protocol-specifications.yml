@@ -198,3 +198,62 @@ jobs:
             ${{ runner.temp }}/file.jsonl
             ${{ runner.temp }}/tap-watch/capture.fstrm
           if-no-files-found: warn
+
+  fs021-libfstrm-tcp-interop:
+    name: FS-021 libfstrm TCP (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: tcp-explicit
+            port: 16061
+          - target: tcp-no-complete
+            port: 16062
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact .NET SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Set up pinned Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: '1.25.6'
+      - name: Install libfstrm build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends autoconf automake libtool pkg-config libevent-dev build-essential
+      - name: Build pinned libfstrm v0.6.1 from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly FSTRM_REF=v0.6.1
+          readonly FSTRM_SHA=1d6e11d750dfa8d15419814dfe0aa86d80000741
+          git clone --depth 1 --branch "$FSTRM_REF" https://github.com/farsightsec/fstrm.git "$RUNNER_TEMP/fstrm-src"
+          test "$(git -C "$RUNNER_TEMP/fstrm-src" rev-parse HEAD)" = "$FSTRM_SHA"
+          cd "$RUNNER_TEMP/fstrm-src"
+          ./autogen.sh
+          ./configure --prefix="$RUNNER_TEMP/fstrm-install"
+          make -j"$(nproc)"
+          make check
+          make install
+          echo "FSTRM_CAPTURE=$RUNNER_TEMP/fstrm-install/bin/fstrm_capture" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/fstrm-install/lib" >> "$GITHUB_ENV"
+      - name: Build Tapper from locked dependencies
+        run: dotnet restore src/Tapper/Tapper.csproj --locked-mode && dotnet build src/Tapper/Tapper.csproj -c Release --no-restore
+      - name: Install pinned independent Go dnstap reader
+        run: GOBIN="$RUNNER_TEMP/dnstap-tools" go install github.com/dnstap/golang-dnstap/dnstap@ebb538e7d351a58861a8f348491828214a1d8db2
+      - name: FS-021 live TCP receiver, completion and negative control
+        shell: bash
+        run: bash .github/interop/fstrm/run-target.sh "${{ matrix.target }}" "$FSTRM_CAPTURE" "$RUNNER_TEMP/dnstap-tools/dnstap" "$(command -v dotnet)" "$RUNNER_TEMP/fstrm-evidence" "${{ matrix.port }}"
+      - name: Upload FS-021 evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fstrm-${{ matrix.target }}-evidence
+          path: ${{ runner.temp }}/fstrm-evidence/
+          if-no-files-found: error
+          retention-days: 90
