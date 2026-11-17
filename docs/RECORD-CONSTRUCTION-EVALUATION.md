@@ -2,9 +2,24 @@
 
 ## Decision
 
-Dnstap.NET accepts native .NET metadata through `DnsLogEntry` and `DnstapRecordFactory.Create`. The consuming application is responsible for parsing text log fields; the library does not accept string-formatted addresses, ports, event names or transport names. This is an intentional breaking refinement of the alpha API introduced in `7557950`, and avoids parsing ambiguities such as abbreviated, hexadecimal or octal IPv4 literals.
+Dnstap.NET accepts native .NET metadata through `DnsLogEntry` and `DnstapRecordFactory.Create` (0.1.0 static API, replaced in 0.2.0). The consuming application is responsible for parsing text log fields; the library does not accept string-formatted addresses, ports, event names or transport names. This is an intentional breaking refinement of the alpha API introduced in `7557950`, and avoids parsing ambiguities such as abbreviated, hexadecimal or octal IPv4 literals.
 
 The generated official dnstap protobuf model remains the authoritative schema. The factory is a narrow convenience API, not a DNS parser, policy engine or second protocol model.
+
+## Stable producer identity and version
+
+`DnstapRecordFactory` is now a sealed immutable instance. The constructor accepts optional `ReadOnlyMemory<byte>` identity and version bytes, copies each nonempty value into an immutable `ByteString` once, and reuses those objects for each record. Empty values are omitted, with no inferred hostname or version. The factory can be reused concurrently because it retains no mutable per-event state. `DnsLogEntry` remains strictly per-event metadata and has no producer identity/version fields.
+
+**Breaking API migration:**
+
+```csharp
+// Before (0.1.0)
+var oldRecord = DnstapRecordFactory.Create(entry);
+
+// After (0.2.0)
+var factory = new DnstapRecordFactory("server-a"u8.ToArray(), "1.2"u8.ToArray());
+var record = factory.Create(entry);
+```
 
 ## Input semantics
 
@@ -34,7 +49,8 @@ Packet bytes are copied when supplied, not synthesized from QNAME/QTYPE/RCODE or
 using System.Net;
 using Dnstap;
 
-var record = DnstapRecordFactory.Create(new DnsLogEntry
+var factory = new DnstapRecordFactory("server-a"u8.ToArray());
+var record = factory.Create(new DnsLogEntry
 {
     EventType = Message.Types.Type.ClientResponse,
     ClientAddress = IPAddress.Parse("192.0.2.10"),
@@ -51,6 +67,6 @@ await writer.WriteAsync(record);
 
 ## Deliberately excluded
 
-No string-parsing overload, `TryCreate`, reflection-based mapper, synthetic DNS packet generator, application-specific `extra` schema, or server-specific adapter is provided. Consumers needing other official fields (policy, identity, version, HTTP protocol, query zone, separate query/response timestamps) may manipulate the generated protobuf record directly.
+No string-parsing overload, `TryCreate`, reflection-based mapper, synthetic DNS packet generator, application-specific `extra` schema, or server-specific adapter is provided. Consumers needing other official fields (policy, HTTP protocol, query zone, separate query/response timestamps) may manipulate the generated protobuf record directly.
 
 See `src/Dnstap/Schema/dnstap.proto` for authoritative field semantics.

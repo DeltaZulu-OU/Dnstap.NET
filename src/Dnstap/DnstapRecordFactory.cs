@@ -5,9 +5,20 @@ using Google.Protobuf;
 namespace Dnstap
 {
     /// <summary>Maps native .NET DNS event metadata into the official dnstap protobuf model.</summary>
-    public static class DnstapRecordFactory
+    public sealed class DnstapRecordFactory
     {
-        public static Dnstap Create(DnsLogEntry entry)
+        private readonly ByteString _identity;
+        private readonly ByteString _version;
+
+        /// <summary>Captures stable producer metadata once. Empty values are omitted.</summary>
+        public DnstapRecordFactory(ReadOnlyMemory<byte> identity = default, ReadOnlyMemory<byte> version = default)
+        {
+            _identity = identity.IsEmpty ? ByteString.Empty : ByteString.CopyFrom(identity.Span);
+            _version = version.IsEmpty ? ByteString.Empty : ByteString.CopyFrom(version.Span);
+        }
+
+        /// <summary>Creates a new independent observation using immutable producer metadata.</summary>
+        public Dnstap Create(DnsLogEntry entry)
         {
             ArgumentNullException.ThrowIfNull(entry);
             var eventType = entry.EventType;
@@ -95,11 +106,20 @@ namespace Dnstap
                 message.ResponseMessage = ByteString.CopyFrom(entry.ResponsePacket.Span);
             }
 
-            return new Dnstap
+            var record = new Dnstap
             {
                 Type = Dnstap.Types.Type.Message,
                 Message = message
             };
+            if (!_identity.IsEmpty)
+            {
+                record.Identity = _identity;
+            }
+            if (!_version.IsEmpty)
+            {
+                record.Version = _version;
+            }
+            return record;
         }
 
         private static bool IsResponse(Message.Types.Type type) =>

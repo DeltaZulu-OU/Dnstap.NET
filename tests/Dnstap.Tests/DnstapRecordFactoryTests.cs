@@ -11,7 +11,7 @@ namespace Dnstap.Tests
         {
             var client = IPAddress.Parse("192.0.2.10");
             var server = IPAddress.Parse("192.0.2.53");
-            var record = DnstapRecordFactory.Create(new DnsLogEntry
+            var record = new DnstapRecordFactory().Create(new DnsLogEntry
             {
                 EventType = Message.Types.Type.ClientResponse,
                 ClientAddress = client,
@@ -45,7 +45,7 @@ namespace Dnstap.Tests
         {
             byte[] packet = [0, 255, 128, 1];
             var timestamp = new DateTimeOffset(2026, 11, 15, 15, 30, 0, TimeSpan.FromHours(2)).AddTicks(1234);
-            var record = DnstapRecordFactory.Create(new DnsLogEntry
+            var record = new DnstapRecordFactory().Create(new DnsLogEntry
             {
                 EventType = Message.Types.Type.ResolverQuery,
                 ClientAddress = IPAddress.Parse("2001:db8::1"),
@@ -68,7 +68,7 @@ namespace Dnstap.Tests
         [TestMethod]
         public void AcceptsUnspecifiedOptionalMetadataWithoutSettingIt()
         {
-            var record = DnstapRecordFactory.Create(new DnsLogEntry { EventType = Message.Types.Type.StubQuery });
+            var record = new DnstapRecordFactory().Create(new DnsLogEntry { EventType = Message.Types.Type.StubQuery });
             Assert.IsTrue(record.IsInitialized());
             Assert.IsFalse(record.Message.HasSocketFamily);
             Assert.IsFalse(record.Message.HasSocketProtocol);
@@ -98,7 +98,7 @@ namespace Dnstap.Tests
         public void PreservesEveryOfficialEventTypeAndTimestampDirection(int numericValue)
         {
             var type = (Message.Types.Type)numericValue;
-            var message = DnstapRecordFactory.Create(new DnsLogEntry
+            var message = new DnstapRecordFactory().Create(new DnsLogEntry
             {
                 EventType = type,
                 Timestamp = DateTimeOffset.UnixEpoch.AddTicks(1)
@@ -130,7 +130,7 @@ namespace Dnstap.Tests
         public void PreservesEveryOfficialSocketProtocol(int numericValue)
         {
             var protocol = (SocketProtocol)numericValue;
-            var record = DnstapRecordFactory.Create(new DnsLogEntry
+            var record = new DnstapRecordFactory().Create(new DnsLogEntry
             {
                 EventType = Message.Types.Type.ClientQuery,
                 Transport = protocol
@@ -141,18 +141,18 @@ namespace Dnstap.Tests
         [TestMethod]
         public void RejectsUnknownEventTypeAndSocketProtocol()
         {
-            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapRecordFactory().Create(
                 new DnsLogEntry { EventType = 0 }));
-            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapRecordFactory().Create(
                 new DnsLogEntry { EventType = (Message.Types.Type)99 }));
-            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapRecordFactory().Create(
                 new DnsLogEntry { EventType = Message.Types.Type.ClientQuery, Transport = (SocketProtocol)99 }));
         }
 
         [TestMethod]
         public void RejectsMixedIpFamiliesAndScopedIpv6()
         {
-            _ = Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new DnstapRecordFactory().Create(
                 new DnsLogEntry
                 {
                     EventType = Message.Types.Type.ClientQuery,
@@ -160,7 +160,7 @@ namespace Dnstap.Tests
                     ServerAddress = IPAddress.Parse("2001:db8::1")
                 }));
 
-            _ = Assert.ThrowsExactly<ArgumentException>(() => DnstapRecordFactory.Create(
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new DnstapRecordFactory().Create(
                 new DnsLogEntry
                 {
                     EventType = Message.Types.Type.ClientQuery,
@@ -172,7 +172,7 @@ namespace Dnstap.Tests
         public void AcceptsIpv4MappedIpv6AsIpv6ButDoesNotNormalizeIt()
         {
             var mapped = IPAddress.Parse("::ffff:192.0.2.10");
-            var result = DnstapRecordFactory.Create(new DnsLogEntry
+            var result = new DnstapRecordFactory().Create(new DnsLogEntry
             {
                 EventType = Message.Types.Type.ClientQuery,
                 ClientAddress = mapped,
@@ -185,8 +185,8 @@ namespace Dnstap.Tests
         [TestMethod]
         public void RejectsPreEpochTimestampAndNullEntry()
         {
-            _ = Assert.ThrowsExactly<ArgumentNullException>(() => DnstapRecordFactory.Create(null!));
-            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => DnstapRecordFactory.Create(
+            _ = Assert.ThrowsExactly<ArgumentNullException>(() => new DnstapRecordFactory().Create(null!));
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new DnstapRecordFactory().Create(
                 new DnsLogEntry
                 {
                     EventType = Message.Types.Type.ClientQuery,
@@ -197,7 +197,7 @@ namespace Dnstap.Tests
         [TestMethod]
         public void ExplicitZeroPortsRemainPresent()
         {
-            var result = DnstapRecordFactory.Create(new DnsLogEntry
+            var result = new DnstapRecordFactory().Create(new DnsLogEntry
             {
                 EventType = Message.Types.Type.ClientQuery,
                 ClientPort = 0,
@@ -206,6 +206,62 @@ namespace Dnstap.Tests
             Assert.IsTrue(result.Message.HasQueryPort);
             Assert.AreEqual(0u, result.Message.QueryPort);
             Assert.AreEqual(ushort.MaxValue, result.Message.ResponsePort);
+        }
+
+        [TestMethod]
+        public void ProducerIdentityAndVersionAreCopiedOnceAndSharedImmutably()
+        {
+            byte[] identity = [0x74, 0x61, 0x70, 0xff];
+            byte[] version = [0, 0x31, 0x00];
+            var factory = new DnstapRecordFactory(identity, version);
+            identity[0] = 0;
+            version[1] = 0;
+            var first = factory.Create(new DnsLogEntry { EventType = Message.Types.Type.ClientQuery });
+            var second = factory.Create(new DnsLogEntry { EventType = Message.Types.Type.ClientResponse });
+            Assert.AreSequenceEqual(new byte[] { 0x74, 0x61, 0x70, 0xff }, first.Identity.ToByteArray());
+            Assert.AreSequenceEqual(new byte[] { 0, 0x31, 0 }, first.Version.ToByteArray());
+            Assert.AreSame(first.Identity, second.Identity);
+            Assert.AreSame(first.Version, second.Version);
+            Assert.IsFalse(ReferenceEquals(first.Message, second.Message));
+        }
+
+        [TestMethod]
+        public void EmptyMetadataIsNotSerialized()
+        {
+            var record = new DnstapRecordFactory().Create(new DnsLogEntry
+            {
+                EventType = Message.Types.Type.ClientQuery
+            });
+            Assert.IsTrue(record.Identity.IsEmpty);
+            Assert.IsTrue(record.Version.IsEmpty);
+            Assert.AreSequenceEqual(Convert.FromHexString("720208057801"), record.ToByteArray());
+        }
+
+        [TestMethod]
+        public void ImmutableFactoryCanBeSharedAcrossConcurrentObservations()
+        {
+            byte[] identity = "producer"u8.ToArray();
+            byte[] version = "0.2"u8.ToArray();
+            var factory = new DnstapRecordFactory(identity, version);
+            identity[0] = 0;
+            version[0] = 0;
+            var records = new Dnstap[256];
+            Parallel.For(0, records.Length, i =>
+            {
+                records[i] = factory.Create(new DnsLogEntry
+                {
+                    EventType = Message.Types.Type.ClientQuery,
+                    ClientPort = (ushort)i
+                });
+            });
+            foreach (var (record, i) in records.Select((record, i) => (record, i)))
+            {
+                Assert.AreSequenceEqual("producer"u8.ToArray(), record.Identity.ToByteArray());
+                Assert.AreSequenceEqual("0.2"u8.ToArray(), record.Version.ToByteArray());
+                Assert.AreEqual((uint)i, record.Message.QueryPort);
+                Assert.AreSame(records[0].Identity, record.Identity);
+                Assert.AreSame(records[0].Version, record.Version);
+            }
         }
     }
 }

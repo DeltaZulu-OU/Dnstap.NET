@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Net;
+using System.Text;
 using System.Net.Sockets;
 using Dnstap;
 using Google.Protobuf;
@@ -71,11 +73,12 @@ static string GetOption(string[] arguments, string option)
 
 static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, bool noComplete, CancellationToken cancellationToken)
 {
+    var factory = new DnstapRecordFactory(Encoding.UTF8.GetBytes("tapper"));
     await using var writer = new DnstapWriter(output, mode);
     await writer.StartAsync(cancellationToken);
     for (var i = 0; i < count; i++)
     {
-        await writer.WriteAsync(CreateEvent(i), cancellationToken);
+        await writer.WriteAsync(CreateEvent(i, factory), cancellationToken);
     }
 
     if (!noComplete)
@@ -84,26 +87,19 @@ static async Task EmitAsync(Stream output, DnstapStreamMode mode, int count, boo
     }
 }
 
-static Dnstap.Dnstap CreateEvent(int index)
+static Dnstap.Dnstap CreateEvent(int index, DnstapRecordFactory factory)
 {
     var query = Convert.FromHexString("000101000001000000000000076578616D706C6503636F6D0000010001");
     BinaryPrimitives.WriteUInt16BigEndian(query, (ushort)index);
-    return new Dnstap.Dnstap
+    return factory.Create(new DnsLogEntry
     {
-        Type = Dnstap.Dnstap.Types.Type.Message,
-        Identity = ByteString.CopyFromUtf8("tapper"),
-        Message = new Message
-        {
-            Type = Message.Types.Type.ClientQuery,
-            SocketFamily = SocketFamily.Inet,
-            SocketProtocol = SocketProtocol.Udp,
-            QueryAddress = ByteString.CopyFrom(new byte[] { 192, 0, 2, 10 }),
-            ResponseAddress = ByteString.CopyFrom(new byte[] { 192, 0, 2, 53 }),
-            QueryPort = (uint)(53000 + index % 10000),
-            ResponsePort = 53,
-            QueryTimeSec = 1_700_000_000,
-            QueryTimeNsec = (uint)(index % 1_000_000_000),
-            QueryMessage = ByteString.CopyFrom(query)
-        }
-    };
+        EventType = Message.Types.Type.ClientQuery,
+        ClientAddress = IPAddress.Parse("192.0.2.10"),
+        ServerAddress = IPAddress.Parse("192.0.2.53"),
+        ClientPort = (ushort)(53000 + index % 10000),
+        ServerPort = 53,
+        Transport = SocketProtocol.Udp,
+        Timestamp = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000).AddTicks(index),
+        QueryPacket = query
+    });
 }

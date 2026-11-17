@@ -34,10 +34,11 @@ await writer.WriteAsync(new global::Dnstap.Dnstap
 await writer.CompleteAsync();
 ```
 
-When a DNS server already exposes native .NET DNS metadata, use `DnstapRecordFactory.Create(new DnsLogEntry { ... })`. The factory accepts typed IP addresses, numeric ports, official event/transport enums, and timestamps. The calling application is responsible for parsing any source strings; the factory never fabricates DNS packets:
+When a DNS server already exposes native .NET DNS metadata, use `new DnstapRecordFactory().Create(new DnsLogEntry { ... })`. The factory accepts typed IP addresses, numeric ports, official event/transport enums, and timestamps. The calling application is responsible for parsing any source strings; the factory never fabricates DNS packets:
 
 ```csharp
-var record = DnstapRecordFactory.Create(new DnsLogEntry
+var factory = new DnstapRecordFactory("my-dns-server"u8.ToArray());
+var record = factory.Create(new DnsLogEntry
 {
     EventType = Message.Types.Type.ClientResponse,
     ClientAddress = System.Net.IPAddress.Parse("192.0.2.10"),
@@ -50,13 +51,28 @@ var record = DnstapRecordFactory.Create(new DnsLogEntry
 await writer.WriteAsync(record);
 ```
 
-`ClientAddress` means DNS message initiator (`query_address`); `ServerAddress` means responder (`response_address`). This mapping must not be confused with the machine observing the event. The example's IP parsing happens outside the library. Packet fields remain unset unless original binary packet bytes are provided. See [record-construction rules](docs/RECORD-CONSTRUCTION-EVALUATION.md) for event types, validation and limitations.
+`ClientAddress` means DNS message initiator (`query_address`); `ServerAddress` means responder (`response_address`). This mapping must not be confused with the machine observing the event. The example's IP parsing happens outside the library. Packet fields remain unset unless original binary packet bytes are provided. The factory copies optional producer `identity` and `version` bytes once and shares the immutable values across records; absent metadata is omitted. Construct one factory per producer and reuse it safely across concurrent events. See [record-construction rules](docs/RECORD-CONSTRUCTION-EVALUATION.md) for event types, validation and limitations.
 
 For a connected, readable/writable TCP stream, use `new DnstapWriter(stream, DnstapStreamMode.Duplex)`. The writer handles READY/ACCEPT/START and STOP/FINISH, but the caller owns the socket, TLS, reconnection and delivery policy. `CompleteAsync()` reports finalization failures; disposing a healthy duplex writer without explicit completion also performs a bounded shutdown.
 
 Use `await writer.FlushAsync()` to flush a buffered underlying stream safely under the writer's serialization lock. It emits no Frame Streams frame, requires an active session, and faults the session if the underlying flush fails or is interrupted. Duplex flushes use the configured operation timeout; file mode has none.
 
 `leaveOpen` defaults to `true`. The default maximum encoded record size is **96 KiB** (configurable with `maxDataLength`); duplex operations have a **30-second** per-operation timeout (configurable with `operationTimeout`). Concurrent writes are serialized without a guaranteed ordering. The official generated model provides protobuf serialization with `ToByteArray()` and parsing with `global::Dnstap.Dnstap.Parser.ParseFrom(bytes)`; these operate on protobuf messages, not complete Frame Streams files.
+
+### Breaking change in 0.2.0
+
+The static factory was replaced by a sealed instance with immutable producer metadata:
+
+```csharp
+// Before (0.1.0):
+var record = DnstapRecordFactory.Create(entry);
+
+// After (0.2.0):
+var factory = new DnstapRecordFactory("server-a"u8.ToArray(), "1.2"u8.ToArray());
+var record = factory.Create(entry);
+```
+
+The constructor accepts raw bytes (`ReadOnlyMemory<byte>`); it does not encode text or choose defaults. Empty values leave the corresponding protobuf fields absent. `DnsLogEntry` remains per-event input.
 
 ## Using Tapper
 
