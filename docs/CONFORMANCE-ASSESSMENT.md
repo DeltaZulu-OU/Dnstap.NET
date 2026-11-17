@@ -27,6 +27,8 @@ Baseline: sender-only .NET 10 Dnstap.NET. Normative protocol behavior is checked
 
 The listed CI runs verified the implementation and interoperability at the corresponding commits. They do not establish receiving support in Dnstap.NET (writer-only), arbitrary future third-party version compatibility, or strict malformed-frame rejection by permissive external readers.
 
+The deterministic malformed-file fixtures are a persistent regression corpus, not coverage-guided fuzzing. The library remains sender-only; its file reader is test-only.
+
 ## Acceptance policy
 
 Do not expand the public API solely to satisfy test-only reader cases. Keep file and duplex sequencing distinct and preserve exact binary content-type matching. A duplex timeout guarantees bounded caller waiting, not termination of noncooperative stream I/O. Timeouts or I/O failure during a frame or shutdown are terminal for the session.

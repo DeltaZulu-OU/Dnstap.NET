@@ -78,6 +78,28 @@ namespace Dnstap.Tests.Protocol
             }
         }
 
+        [TestMethod]
+        [DataRow("00000000")] // Incomplete control prefix.
+        [DataRow("0000000000000003")] // Control payload below minimum length.
+        [DataRow("0000000000000201")] // Declared control payload larger than 512.
+        [DataRow("000000000000000400000003")] // STOP without START.
+        [DataRow("0000000100")] // DATA without START.
+        [DataRow("000000000000000400000002")] // START without STOP.
+        [DataRow("000000000000000400000004")] // READY in file mode.
+        [DataRow("000000000000000400000002000000000000000400000003FF")] // Trailing garbage.
+        public async Task PersistentMalformedFileCorpusIsRejectedWithoutUnhandledExceptions(string hex)
+        {
+            await using var input = new MemoryStream(Convert.FromHexString(hex));
+            _ = await Assert.ThrowsExactlyAsync<InvalidDataException>(async () =>
+            {
+                await foreach (var _ in FileFrameSession.ReadAsync(input,
+                    maxDataLength: 256, cancellationToken: TestContext.CancellationToken))
+                {
+                    // A complete file session is impossible for every fixture.
+                }
+            });
+        }
+
         public TestContext TestContext { get; set; } = null!;
     }
 }

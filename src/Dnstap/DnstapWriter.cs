@@ -144,6 +144,8 @@ namespace Dnstap
         }
 
         /// <summary>Writes one initialized record. Concurrent writes are serialized; ordering is not guaranteed.</summary>
+        /// <remarks>The caller must not mutate the protobuf record during validation and serialization.
+        /// Its encoded frame is copied before asynchronous stream I/O begins.</remarks>
         /// <param name="message"></param>
         /// <param name="cancellationToken"></param>
         /// <exception cref="InvalidOperationException"></exception>

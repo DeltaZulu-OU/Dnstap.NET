@@ -11,6 +11,10 @@ Duplex `StartAsync` flushes READY before reading ACCEPT and flushes START before
 
 Public `DnstapWriter.FlushAsync(CancellationToken)` is necessary when the caller supplies a buffered or wrapped stream. Flushing that stream externally would race DATA/control writes and could violate framing order; the writer holds the same gate during public flush. Public flush emits no frames and requires the started state. An I/O failure or cancellation during flush faults the session; cancellation while waiting for the lock does not. Duplex mode applies the normal per-operation deadline, while file mode has no implicit deadline.
 
+## Record input ownership
+
+The generated protobuf record is mutable. Callers must not modify the record or its nested messages concurrently with `DnstapWriter.WriteAsync` validation and serialization. `WriteAsync` synchronously encodes the record into a privately owned frame before yielding for asynchronous transport I/O. Once the call returns its task, subsequent edits to the source protobuf object cannot alter that pending frame. The writer does not clone the protobuf model separately or make caller-managed mutation during serialization safe.
+
 ## Record-size bound
 
 The default `DnstapWriter` limit is **96 KiB = 98,304 bytes of serialized protobuf DATA payload**, excluding the four-byte Frame Streams DATA length header. The `maxDataLength` constructor parameter changes that limit (within the writer's validated range); it does **not** resize the DNS message or truncate oversized records. A record whose serialized size exceeds the limit is rejected **before** writing that frame. The limit applies equally to file and duplex writers. It is a local sender bound, not a receiver-negotiated Frame Streams limit.
