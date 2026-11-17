@@ -7,6 +7,8 @@
 - Keep `operationTimeout` as a per-operation bound in duplex mode. A DATA frame (header and encoded payload) is one write with one deadline. The gate wait has a separate deadline. Control header and control body reads still have separate deadlines.
 - File mode has no implicit I/O or lock timeout, including during `DisposeAsync`. Callers that use file-like network or remote streams must plan for stalled operations.
 
+Duplex `StartAsync` flushes READY before reading ACCEPT and flushes START before returning. Both flushes use the configured duplex operation deadline. This is essential for transports that buffer outgoing writes. File-mode startup remains unchanged.
+
 ## Cancellation and incomplete I/O
 
 A duplex timeout bounds **the caller's wait**, not the lifetime of arbitrary custom `Stream` operations. A stream can disregard cancellation; the in-flight task can continue after `WriteAsync` returns a `TimeoutException`. In such cases the writer enters `Faulted`, never sends a further DATA frame, and must not be reused. Owned-frame data stays in a separate managed array, so late access does not reuse or overwrite a shared header. The stream owner remains responsible for handling any transport-level pending operations and choosing whether and when to close the transport. Disposing an owned stream can overlap pending noncooperative I/O.

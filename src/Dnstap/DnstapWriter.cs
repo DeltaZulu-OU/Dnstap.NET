@@ -109,6 +109,9 @@ namespace Dnstap
                     {
                         await WriteControlAsync(ControlTypes.Ready, cancellationToken, withContentType: true)
                             .ConfigureAwait(false);
+                        // A buffered duplex transport must expose READY before the peer can send ACCEPT.
+                        await StreamDeadline.FlushAsync(_stream, WriteTimeout, _timeProvider, cancellationToken)
+                            .ConfigureAwait(false);
                         var accepted = await ReadControlAsync(cancellationToken).ConfigureAwait(false);
                         if (accepted.Type != ControlTypes.Accept ||
                             (accepted.ContentTypes.Count != 0 &&
@@ -120,6 +123,12 @@ namespace Dnstap
 
                     await WriteControlAsync(ControlTypes.Start, cancellationToken, withContentType: true)
                         .ConfigureAwait(false);
+                    if (_mode == DnstapStreamMode.Duplex)
+                    {
+                        // START must be available to receivers that buffer before reading DATA.
+                        await StreamDeadline.FlushAsync(_stream, WriteTimeout, _timeProvider, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                     _state = SessionState.Started;
                 }
                 catch

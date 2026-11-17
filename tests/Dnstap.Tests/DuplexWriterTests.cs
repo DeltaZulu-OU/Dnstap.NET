@@ -321,6 +321,69 @@ namespace Dnstap.Tests
             Assert.AreEqual(1, stream.DisposeCalls);
         }
 
+
+        [TestMethod]
+        public async Task FS025_BufferedDuplexControlFramesMustFlushReadyAndStart()
+        {
+            await using var stream = new FlushGatedDuplexStream();
+            await using var writer = new DnstapWriter(stream, DnstapStreamMode.Duplex);
+            await writer.StartAsync(TestContext.CancellationToken);
+            Assert.AreEqual(2, stream.FlushCalls, "Both READY and START must flush during StartAsync.");
+            Assert.AreSequenceEqual(WireFixture.Concat(
+                Convert.FromHexString("000000000000002200000004000000010000001670726F746F6275663A646E737461702E446E73746170"),
+                WireFixture.Start), stream.Visible, "START must be visible before StartAsync returns.");
+            await writer.CompleteAsync(TestContext.CancellationToken);
+            Assert.AreEqual(3, stream.FlushCalls, "STOP uses the existing completion flush.");
+        }
+
+        /// <summary>A duplex peer cannot reply to buffered READY or see START until flushed.</summary>
+        private sealed class FlushGatedDuplexStream : Stream
+        {
+            private readonly MemoryStream _pending = new();
+            private readonly MemoryStream _visible = new();
+            private readonly MemoryStream _responses = new(WireFixture.Concat(
+                WireFixture.Control(ControlTypes.Accept), WireFixture.Control(ControlTypes.Finish)));
+            internal int FlushCalls { get; private set; }
+            internal byte[] Visible => _visible.ToArray();
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                var required = _responses.Position < 12
+                    ? 42  // READY: 8-byte frame header + 34-byte control payload.
+                    : 42 + WireFixture.Start.Length + WireFixture.Stop.Length;
+                if (_visible.Length < required)
+                {
+                    throw new InvalidOperationException("Peer cannot respond before the control frame is flushed.");
+                }
+                return _responses.ReadAsync(buffer, cancellationToken);
+            }
+
+            public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+                _pending.WriteAsync(buffer, cancellationToken);
+
+            public override Task FlushAsync(CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _pending.Position = 0;
+                _pending.CopyTo(_visible);
+                _pending.SetLength(0);
+                _pending.Position = 0;
+                FlushCalls++;
+                return Task.CompletedTask;
+            }
+
+            public override void Flush() => throw new NotSupportedException();
+            public override bool CanRead => true;
+            public override bool CanWrite => true;
+            public override bool CanSeek => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+        }
+
         private static DnstapWriter NewTimedWriter(Stream stream, TimeProvider clock) =>
             new(stream, DnstapStreamMode.Duplex, leaveOpen: true,
                 maxDataLength: 98_304, operationTimeout: TimeSpan.FromSeconds(10), timeProvider: clock);

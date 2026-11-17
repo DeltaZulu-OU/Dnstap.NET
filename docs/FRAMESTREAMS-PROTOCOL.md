@@ -78,6 +78,7 @@ Test names retain the original IDs. `Sender` describes shipped functionality; `o
 | FS-020 | Size read buffers from validated lengths | Oracle |
 | FS-021 | A libfstrm v0.6.1 TCP receiver must acknowledge explicit and implicit sender completion with FINISH; its complete captures must pass independent Go decode and exact record assertions with a failing negative control | External interop |
 | FS-022 | Files produced by Tapper must be readable by libfstrm v0.6.1 `fstrm_dump`, BIND `dnstap-read`, and Knot `kdig -G`; assert every observable field and retain full Go checks, recording truncated-file behavior without assuming strictness | External interop |
+| FS-025 | Duplex StartAsync flushes READY before reading ACCEPT and flushes START before returning; both use the existing operation deadline, with file mode unchanged | Sender / buffered-peer test |
 | FS-024 | Tapper TCP and Unix duplex streams are accepted by SHA-256-pinned Unbound 1.26.2 `unbound-dnstap-socket`, in explicit and disposal-driven completion modes; three decoded CLIENT_QUERY records, identity and query packets are asserted | External interop |
 | FS-023 | Tapper must support a Unix-domain stream socket in duplex mode, including explicit completion and disposal-driven completion, accepted by the libfstrm v0.6.1 capture receiver | External interop |
 

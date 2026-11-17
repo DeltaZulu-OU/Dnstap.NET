@@ -17,6 +17,7 @@ Baseline: sender-only .NET 10 Dnstap.NET. Normative protocol behavior is checked
 | FS-023 Unix-domain socket capture | Tapper Unix mode, explicit and disposal completion against pinned libfstrm capture and Go decode | CI external interop matrix; pending verified runs |
 | FS-022 independent file readers | libfstrm dump, BIND YAML, and Knot DNS output; truncated-file observations; pinned Ubuntu 24.04 packages and versions | CI file-reader interop matrix; pending verified runs |
 | FS-024 Unbound receiver interoperability | Unbound 1.26.2 pinned release tarball, TCP and Unix socket, explicit and implicit completion, decoded record and identity checks | CI external interop matrix; pending verified runs |
+| FS-025 duplex control flushing | A test-only duplex peer buffers writes until FlushAsync; verifies READY is flushed before ACCEPT and START is flushed before StartAsync completes | MSTest specification |
 | Peer sends premature FINISH during active DATA | No background read loop | **Known sender limitation**; not detectable without adding asynchronous duplex receive functionality |
 | File reader strict trailing data and EOF | FS-011 test oracle | Covered in tests; no public receiving API |
 
