@@ -14,7 +14,7 @@ RECEIVER_PID=""
 usage() {
     cat <<'HELP'
 Usage: run-target.sh TARGET FSTRM_CAPTURE DNSTAP_READER DOTNET OUTPUT_DIR [TCP_PORT]
-Targets: tcp-explicit, tcp-no-complete
+Targets: tcp-explicit, tcp-no-complete, unix-explicit, unix-no-complete
 Tool paths and OUTPUT_DIR should be absolute. Build Tapper in Release first.
 Set TRACE=1 to print each shell command. No root privileges are needed.
 HELP
@@ -46,7 +46,7 @@ verify_capture_cli() {
     "$capture" --help > "$evidence/fstrm-help.txt" 2>&1 || status=$?
     [[ "$status" -le 1 ]] || fail "fstrm_capture --help returned $status"
     local flag
-    for flag in --type --tcp --port --write; do
+    for flag in --type --tcp --port --unix --write; do
         grep -Fq -- "$flag" "$evidence/fstrm-help.txt" || fail "Missing v0.6.1 flag: $flag"
     done
     status=0
@@ -68,6 +68,16 @@ wait_for_listener() {
     fail "Timed out waiting for libfstrm TCP listener on $port"
 }
 
+wait_for_unix_listener() {
+    local socket_path="$1" evidence="$2" attempt
+    for ((attempt=0; attempt<100; attempt++)); do
+        if [[ -S "$socket_path" ]]; then return 0; fi
+        kill -0 "$RECEIVER_PID" 2>/dev/null || fail "Receiver exited before Unix socket appeared; see $evidence/fstrm.stderr"
+        sleep 0.1
+    done
+    fail "Timed out waiting for Unix socket: $socket_path"
+}
+
 assert_records() {
     local evidence="$1" expected="$2"
     jq -s -e --argjson expected "$expected" -f "$SCRIPT_DIR/assert-go-dnstap.jq" "$evidence/decoded.jsonl"
@@ -79,12 +89,15 @@ main() {
     local target="$1" capture="$2" reader="$3" dotnet="$4" evidence="$5"
     local port="${6:-16061}"
     local -a completion_args=()
+    local transport="tcp"
     case "$target" in
         tcp-explicit) ;;
         tcp-no-complete) completion_args+=(--no-complete) ;;
+        unix-explicit) transport="unix" ;;
+        unix-no-complete) transport="unix"; completion_args+=(--no-complete) ;;
         *) fail "Unsupported target: $target"; return 2 ;;
     esac
-    if [[ ! "$port" =~ ^[0-9]+$ ]] || ((port < 1 || port > 65535)); then
+    if [[ "$transport" == "tcp" ]] && { [[ ! "$port" =~ ^[0-9]+$ ]] || ((port < 1 || port > 65535)); }; then
         fail "TCP port must be in 1..65535"
         return 2
     fi
@@ -96,16 +109,28 @@ main() {
     mkdir -p "$evidence"
     verify_capture_cli "$capture" "$evidence"
     go version -m "$reader" >> "$evidence/versions.txt"
-    printf 'FS-021 target: %s\n' "$target" >> "$evidence/versions.txt"
+    printf 'FS-021/FS-023 target: %s\n' "$target" >> "$evidence/versions.txt"
 
-    "$capture" --type "$CONTENT_TYPE" --tcp 127.0.0.1 --port "$port" --write "$evidence/capture.fstrm" --debug --debug --debug \
-        > "$evidence/fstrm.stdout" 2> "$evidence/fstrm.stderr" &
+    local -a receiver_args=(--type "$CONTENT_TYPE" --write "$evidence/capture.fstrm" --debug --debug --debug)
+    local -a sender_args=()
+    if [[ "$transport" == "unix" ]]; then
+        local socket_path="$evidence/capture.sock"
+        receiver_args+=(--unix "$socket_path")
+        sender_args+=(unix --path "$socket_path")
+    else
+        receiver_args+=(--tcp 127.0.0.1 --port "$port")
+        sender_args+=(tcp --host 127.0.0.1 --port "$port")
+    fi
+    "$capture" "${receiver_args[@]}" > "$evidence/fstrm.stdout" 2> "$evidence/fstrm.stderr" &
     RECEIVER_PID=$!
     trap cleanup_receiver EXIT
-    wait_for_listener "$port" "$evidence"
-
+    if [[ "$transport" == "unix" ]]; then
+        wait_for_unix_listener "$socket_path" "$evidence"
+    else
+        wait_for_listener "$port" "$evidence"
+    fi
     "$dotnet" run --project "$REPO_ROOT/src/Tapper/Tapper.csproj" -c Release --no-build -- \
-        tcp --host 127.0.0.1 --port "$port" --count "$COUNT" "${completion_args[@]}" \
+        "${sender_args[@]}" --count "$COUNT" "${completion_args[@]}" \
         > "$evidence/tapper.stdout" 2> "$evidence/tapper.stderr"
     # Tapper exiting successfully proves that STOP was acknowledged by FINISH.
     kill -TERM "$RECEIVER_PID"
@@ -120,7 +145,7 @@ main() {
         fail "Negative control unexpectedly accepted the wrong record count"
     fi
     printf 'FS-021 negative control rejected expected count %d (actual %d)\n' "$((COUNT+1))" "$COUNT" >> "$evidence/negative-control.log"
-    printf 'FS-021 %s: %d records, expected DNS IDs, and FINISH verified\n' "$target" "$COUNT"
+    printf 'FS-021/FS-023 %s: %d records, expected DNS IDs, and FINISH verified\n' "$target" "$COUNT"
 }
 
 main "$@"

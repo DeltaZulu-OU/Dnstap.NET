@@ -5,15 +5,15 @@ using Google.Protobuf;
 
 try
 {
-    if (args.Length == 0 || (args[0] != "file" && args[0] != "tcp"))
+    if (args.Length == 0 || (args[0] != "file" && args[0] != "tcp" && args[0] != "unix"))
     {
-        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N [--no-complete] | Tapper tcp --host HOST --port PORT --count N [--no-complete]");
+        Console.Error.WriteLine("Usage: Tapper file --output PATH --count N [--no-complete] | Tapper tcp --host HOST --port PORT --count N [--no-complete] | Tapper unix --path SOCKET --count N [--no-complete]");
         return 2;
     }
 
     var mode = args[0];
     var noComplete = args.Contains("--no-complete", StringComparer.Ordinal);
-    var expectedArgs = (mode == "file" ? 5 : 7) + (noComplete ? 1 : 0);
+    var expectedArgs = (mode == "tcp" ? 7 : 5) + (noComplete ? 1 : 0);
     if (args.Length != expectedArgs ||
         !int.TryParse(GetOption(args, "--count"), out var count) || count < 0)
     {
@@ -25,6 +25,14 @@ try
     {
         await using var output = new FileStream(GetOption(args, "--output"), FileMode.Create, FileAccess.Write);
         await EmitAsync(output, DnstapStreamMode.File, count, noComplete, deadline.Token);
+    }
+    else if (mode == "unix")
+    {
+        var path = GetOption(args, "--path");
+        using var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        await client.ConnectAsync(new UnixDomainSocketEndPoint(path), deadline.Token);
+        await using var output = new NetworkStream(client, ownsSocket: false);
+        await EmitAsync(output, DnstapStreamMode.Duplex, count, noComplete, deadline.Token);
     }
     else
     {

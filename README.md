@@ -73,6 +73,8 @@ The caller retains ownership of supplied streams by default (`leaveOpen: true`).
 
 Run `dotnet test tests/Dnstap.Tests/Dnstap.Tests.csproj -c Release` for unit tests. GitHub Actions additionally validates Tapper file and TCP output against the pinned Go dnstap reader, **DNS-collector v3.3.7**, and **libfstrm v0.6.1**. The libfstrm TCP matrix exercises both explicit completion and disposal-driven completion; the pinned Go reader independently validates its finished captures. Receiver acceptance alone is not proof of strict protocol compliance.
 
+Tapper also supports `unix --path /path/to/socket --count 3 [--no-complete]` for a Frame Streams duplex Unix-domain socket, exercised by FS-023 against libfstrm's Unix-socket capture receiver.
+
 To reproduce FS-021 locally, first build Tapper in Release, then run `bash .github/interop/fstrm/run-target.sh tcp-explicit /absolute/path/to/fstrm_capture /absolute/path/to/dnstap /absolute/path/to/dotnet /absolute/evidence/directory`. Use `tcp-no-complete` to check disposal-driven completion. The capture tool must be built from libfstrm tag `v0.6.1` at commit `1d6e11d750dfa8d15419814dfe0aa86d80000741`; the Go dnstap reader is pinned to `ebb538e7d351a58861a8f348491828214a1d8db2`. The script validates receiver CLI flags, exact decoded records, distinct DNS IDs, and a negative control. No root privileges are required.
 
 FS-022 additionally reads Tapper file captures with pinned libfstrm `fstrm_dump`, BIND `dnstap-read -y`, and Knot `kdig -G`, on Ubuntu 24.04. The file-reader matrix records their exact package versions and observed behavior on truncated files. It compares every field exposed by the reader, with the full Go record assertions still required for every target.
